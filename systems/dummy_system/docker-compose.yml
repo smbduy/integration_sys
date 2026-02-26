@@ -1,0 +1,47 @@
+# Docker Compose для DummySystem.
+# Только сервисы компонентов. Брокер запускается отдельно (docker/docker-compose.yml).
+# Этот файл НЕ используется напрямую — его собирает scripts/prepare_system.py.
+
+services:
+  dummy_component_a:
+    build:
+      context: ../..
+      dockerfile: systems/dummy_system/src/dummy_component_a/docker/Dockerfile
+    profiles: ["kafka", "mqtt"]
+    environment:
+      - COMPONENT_ID=${DUMMY_COMPONENT_A_COMPONENT_ID:-dummy_component_a}
+      - BROKER_TYPE=${BROKER_TYPE:-kafka}
+      - BROKER_USER=${DUMMY_COMPONENT_A_BROKER_USER:-${ADMIN_USER:-admin}}
+      - BROKER_PASSWORD=${DUMMY_COMPONENT_A_BROKER_PASSWORD:-${ADMIN_PASSWORD:-admin123}}
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    networks:
+      - drones_net
+    restart: unless-stopped
+
+  security_monitor:
+    build:
+      context: ../..
+      dockerfile: systems/dummy_system/src/security_monitor/docker/Dockerfile
+    profiles: ["kafka", "mqtt"]
+    environment:
+      - COMPONENT_ID=${SECURITY_MONITOR_COMPONENT_ID:-security_monitor}
+      - BROKER_TYPE=${BROKER_TYPE:-kafka}
+      - BROKER_USER=${SECURITY_MONITOR_BROKER_USER:-${ADMIN_USER:-admin}}
+      - BROKER_PASSWORD=${SECURITY_MONITOR_BROKER_PASSWORD:-${ADMIN_PASSWORD:-admin123}}
+      - POLICY_ADMIN_SENDER=${SECURITY_MONITOR_POLICY_ADMIN_SENDER:-}
+      - SECURITY_POLICIES=${SECURITY_MONITOR_SECURITY_POLICIES:-}
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    networks:
+      - drones_net
+    restart: unless-stopped
+
+networks:
+  drones_net:
+    external: true
+    name: ${DOCKER_NETWORK:-drones_net}
