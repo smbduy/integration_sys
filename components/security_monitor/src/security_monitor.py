@@ -29,6 +29,7 @@ class SecurityMonitorComponent(BaseComponent):
         ).strip()
         raw_policies = security_policies if security_policies is not None else os.environ.get("SECURITY_POLICIES", "")
         self._policies: Set[PolicyKey] = self._parse_policies(raw_policies)
+        self._mode: str = "NORMAL"  # NORMAL | ISOLATED
 
         super().__init__(
             component_id=component_id,
@@ -44,6 +45,8 @@ class SecurityMonitorComponent(BaseComponent):
         self.register_handler("remove_policy", self._handle_remove_policy)
         self.register_handler("clear_policies", self._handle_clear_policies)
         self.register_handler("list_policies", self._handle_list_policies)
+        self.register_handler("ISOLATION_START", self._handle_isolation_start)
+        self.register_handler("isolation_status", self._handle_isolation_status)
 
     def _parse_policies(self, raw: str) -> Set[PolicyKey]:
         if not raw:
@@ -156,6 +159,40 @@ class SecurityMonitorComponent(BaseComponent):
 
     def _is_allowed(self, sender_id: str, target_topic: str, target_action: str) -> bool:
         return (sender_id, target_topic, target_action) in self._policies
+
+    # ------------------------------------------------------- isolation support
+
+    def _load_emergency_policies(self) -> None:
+        """
+        Заменяет текущие политики на фиксированный аварийный набор.
+        """
+        emergency: Set[PolicyKey] = {
+            ("emergensy", "components.navigation", "GET_LAST_STATE"),
+            ("emergensy", "components.motors", "LAND"),
+            ("emergensy", "components.sprayer", "SET_SPRAY"),
+            ("emergensy", "components.journal", "LOG_EVENT"),
+            ("emergensy", "components.security_monitor", "isolation_status"),
+        }
+        self._policies = emergency
+        self._mode = "ISOLATED"
+
+    def _handle_isolation_start(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Обработчик команды ISOLATION_START.
+
+        Предполагается, что инициатором выступает компонент emergensy.
+        """
+        sender = str(message.get("sender", "")).strip()
+        # Разрешаем только emergensy или администратора политик.
+        if not (sender.startswith("emergensy") or self._can_manage_policies(sender)):
+            return {"activated": False, "error": "forbidden"}
+
+        self._load_emergency_policies()
+        # Можно дополнительно залогировать событие через отдельный компонент журнала.
+        return {"activated": True, "mode": self._mode}
+
+    def _handle_isolation_status(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return {"mode": self._mode}
 
     def _handle_proxy_request(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         payload = message.get("payload", {}) or {}

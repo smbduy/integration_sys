@@ -1,6 +1,6 @@
-"""Точка входа для SecurityMonitorComponent как отдельного компонента.
+"""Точка входа для LimiterComponent в составе системы.
 
-Запуск: python -m components.security_monitor
+Запуск: python -m components.limiter
 """
 import os
 import signal
@@ -8,21 +8,22 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
+from components.limiter.src.limiter import LimiterComponent
+from components.limiter.topics import ComponentTopics
 
 
 def main() -> None:
-    component_id = os.environ.get("COMPONENT_ID", "security_monitor")
+    component_id = os.environ.get("COMPONENT_ID", "limiter")
     bus = create_system_bus(client_id=component_id)
 
-    component = SecurityMonitorComponent(
+    component = LimiterComponent(
         component_id=component_id,
         bus=bus,
-        topic="components.security_monitor",
+        topic=ComponentTopics.LIMITER,
     )
     component.start()
 
-    print(f"[{component_id}] Running SecurityMonitorComponent. Press Ctrl+C to stop.")
+    print(f"[{component_id}] Running LimiterComponent. Press Ctrl+C to stop.")
 
     def signal_handler(sig, frame):
         print(f"\n[{component_id}] Received signal {sig}, shutting down...")

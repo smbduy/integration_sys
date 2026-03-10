@@ -1,6 +1,6 @@
-"""Точка входа для SecurityMonitorComponent как отдельного компонента.
+"""Точка входа для AutopilotComponent в составе системы.
 
-Запуск: python -m components.security_monitor
+Запуск: python -m components.autopilot
 """
 import os
 import signal
@@ -8,21 +8,22 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
+from components.autopilot.src.autopilot import AutopilotComponent
+from components.autopilot.topics import ComponentTopics
 
 
 def main() -> None:
-    component_id = os.environ.get("COMPONENT_ID", "security_monitor")
+    component_id = os.environ.get("COMPONENT_ID", "autopilot")
     bus = create_system_bus(client_id=component_id)
 
-    component = SecurityMonitorComponent(
+    component = AutopilotComponent(
         component_id=component_id,
         bus=bus,
-        topic="components.security_monitor",
+        topic=ComponentTopics.AUTOPILOT,
     )
     component.start()
 
-    print(f"[{component_id}] Running SecurityMonitorComponent. Press Ctrl+C to stop.")
+    print(f"[{component_id}] Running AutopilotComponent. Press Ctrl+C to stop.")
 
     def signal_handler(sig, frame):
         print(f"\n[{component_id}] Received signal {sig}, shutting down...")
