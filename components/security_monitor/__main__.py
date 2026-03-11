@@ -8,6 +8,7 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
+from components.security_monitor import config
 from components.security_monitor.src.security_monitor import SecurityMonitorComponent
 
 
@@ -18,7 +19,7 @@ def main() -> None:
     component = SecurityMonitorComponent(
         component_id=component_id,
         bus=bus,
-        topic="components.security_monitor",
+        topic=config.component_topic(),
     )
     component.start()
 

@@ -7,6 +7,7 @@ from typing import Dict, Any, Tuple, Set, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from components.security_monitor import config
 
 
 PolicyKey = Tuple[str, str, str]
@@ -18,7 +19,7 @@ class SecurityMonitorComponent(BaseComponent):
         self,
         component_id: str,
         bus: SystemBus,
-        topic: str = "components.security_monitor",
+        topic: str = "",
         policy_admin_sender: Optional[str] = None,
         security_policies: Optional[str] = None,
     ):
@@ -34,7 +35,7 @@ class SecurityMonitorComponent(BaseComponent):
         super().__init__(
             component_id=component_id,
             component_type="security_monitor",
-            topic=topic,
+            topic=(topic or config.component_topic()),
             bus=bus,
         )
 
@@ -167,11 +168,11 @@ class SecurityMonitorComponent(BaseComponent):
         Заменяет текущие политики на фиксированный аварийный набор.
         """
         emergency: Set[PolicyKey] = {
-            ("emergensy", "components.navigation", "GET_LAST_STATE"),
-            ("emergensy", "components.motors", "LAND"),
-            ("emergensy", "components.sprayer", "SET_SPRAY"),
-            ("emergensy", "components.journal", "LOG_EVENT"),
-            ("emergensy", "components.security_monitor", "isolation_status"),
+            ("emergensy", config.topic_for("navigation"), "GET_LAST_STATE"),
+            ("emergensy", config.topic_for("motors"), "LAND"),
+            ("emergensy", config.topic_for("sprayer"), "SET_SPRAY"),
+            ("emergensy", config.topic_for("journal"), "LOG_EVENT"),
+            ("emergensy", config.topic_for("security_monitor"), "isolation_status"),
         }
         self._policies = emergency
         self._mode = "ISOLATED"
@@ -210,7 +211,11 @@ class SecurityMonitorComponent(BaseComponent):
             "sender": self.component_id,
             "payload": target_payload,
         }
-        response = self.bus.request(target_topic, request_message, timeout=10.0)
+        response = self.bus.request(
+            target_topic,
+            request_message,
+            timeout=config.proxy_request_timeout_s(),
+        )
         if not response:
             return None
 

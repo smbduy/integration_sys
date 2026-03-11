@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
+from components.autopilot import config
 from components.autopilot.src.autopilot import AutopilotComponent
-from components.autopilot.topics import ComponentTopics
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
     component = AutopilotComponent(
         component_id=component_id,
         bus=bus,
-        topic=ComponentTopics.AUTOPILOT,
+        topic=config.component_topic(),
     )
     component.start()
 

@@ -17,9 +17,15 @@ cp components/security_monitor/.env.example components/security_monitor/.env
 2. Укажите admin sender и стартовые политики в `.env`:
 
 - `POLICY_ADMIN_SENDER=security_monitor_admin`
-- `SECURITY_POLICIES=` (пусто = deny-all)
+- `SECURITY_POLICIES=` (пусто = deny-all, формат только JSON)
 
-3. В составе системы поднимите сервисы:
+3. В составе системы задайте `SYSTEM_NAME`:
+
+- `SYSTEM_NAME=agrodron`
+
+Тогда топик монитора будет `agrodron.security_monitor` (если не задан `COMPONENT_TOPIC`).
+
+4. В составе системы поднимите сервисы:
 
 ```bash
 cd systems/dummy_system
@@ -27,7 +33,7 @@ make prepare
 make docker-up
 ```
 
-4. Базовая проверка логики:
+5. Базовая проверка логики:
 
 - `proxy_request` без policy -> `None` (запрещено)
 - `set_policy` от `POLICY_ADMIN_SENDER` -> `updated: true`
@@ -35,27 +41,25 @@ make docker-up
 
 ## Переменные окружения
 
+- `SYSTEM_NAME` — имя системы (например `agrodron`). В примерах может быть `components`.
 - `COMPONENT_ID` — идентификатор компонента (по умолчанию `security_monitor_standalone` в standalone entrypoint).
+- `COMPONENT_TOPIC` — (опционально) полный override топика монитора.
 - `POLICY_ADMIN_SENDER` — sender, которому разрешено менять политики (`set/remove/clear`).
 - `SECURITY_POLICIES` — стартовые политики.
+- `SECURITY_MONITOR_PROXY_REQUEST_TIMEOUT_S` — таймаут реального `request` к целевому компоненту.
 
 Для быстрого старта используйте `components/security_monitor/.env.example`
 и скопируйте его в `.env`.
 
 ### Формат `SECURITY_POLICIES`
 
-Поддерживаются два формата:
-
-1. JSON-список:
+В системе используется **только JSON-список**:
 
 ```json
-[{"sender":"client_a","topic":"components.dummy_component_a","action":"echo"}]
-```
-
-2. Строка с `;` и `,`:
-
-```text
-client_a,components.dummy_component_a,echo;client_a,components.dummy_component_a,increment
+[
+  { "sender": "autopilot", "topic": "agrodron.navigation", "action": "get_state" },
+  { "sender": "autopilot", "topic": "agrodron.motors", "action": "SET_TARGET" }
+]
 ```
 
 ## Поддерживаемые actions
@@ -66,6 +70,8 @@ client_a,components.dummy_component_a,echo;client_a,components.dummy_component_a
 - `remove_policy` — удалить разрешение (только `POLICY_ADMIN_SENDER`).
 - `clear_policies` — очистить все разрешения (только `POLICY_ADMIN_SENDER`).
 - `list_policies` — вернуть текущие политики.
+- `ISOLATION_START` — включить режим изоляции (инициатор `emergensy` или admin).
+- `isolation_status` — получить текущий режим (`NORMAL`/`ISOLATED`).
 
 ## Формат proxy-запроса
 
@@ -75,7 +81,7 @@ client_a,components.dummy_component_a,echo;client_a,components.dummy_component_a
   "sender": "client_a",
   "payload": {
     "target": {
-      "topic": "components.dummy_component_a",
+      "topic": "agrodron.some_component",
       "action": "echo"
     },
     "data": {
@@ -99,7 +105,7 @@ client_a,components.dummy_component_a,echo;client_a,components.dummy_component_a
   "sender": "security_monitor_admin",
   "payload": {
     "sender": "client_a",
-    "topic": "components.dummy_component_a",
+    "topic": "agrodron.some_component",
     "action": "echo"
   }
 }
@@ -113,7 +119,7 @@ client_a,components.dummy_component_a,echo;client_a,components.dummy_component_a
   "sender": "security_monitor_admin",
   "payload": {
     "sender": "client_a",
-    "topic": "components.dummy_component_a",
+    "topic": "agrodron.some_component",
     "action": "echo"
   }
 }
@@ -151,6 +157,7 @@ python -m components.security_monitor
 
 Используйте версию в `systems/<system>/src/security_monitor` и передавайте переменные:
 
+- `SYSTEM_NAME`
 - `COMPONENT_ID`
 - `POLICY_ADMIN_SENDER`
 - `SECURITY_POLICIES`

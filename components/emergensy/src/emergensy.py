@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from components.emergensy import config
 
 
 class EmergenseyComponent(BaseComponent):
@@ -17,16 +18,16 @@ class EmergenseyComponent(BaseComponent):
         self,
         component_id: str,
         bus: SystemBus,
-        topic: str = "components.emergensy",
-        security_monitor_topic: str = "components.security_monitor",
+        topic: str = "",
+        security_monitor_topic: str = "",
     ):
-        self._security_monitor_topic = security_monitor_topic
+        self._security_monitor_topic = security_monitor_topic or config.security_monitor_topic()
         self._active: bool = False
 
         super().__init__(
             component_id=component_id,
             component_type="emergensy",
-            topic=topic,
+            topic=(topic or config.component_topic()),
             bus=bus,
         )
 
@@ -74,7 +75,7 @@ class EmergenseyComponent(BaseComponent):
             "sender": self.component_id,
             "payload": {
                 "target": {
-                    "topic": "components.sprayer",
+                    "topic": config.topic_for("sprayer"),
                     "action": "SET_SPRAY",
                 },
                 "data": {"spray": False, "reason": "emergency"},
@@ -88,7 +89,7 @@ class EmergenseyComponent(BaseComponent):
             "sender": self.component_id,
             "payload": {
                 "target": {
-                    "topic": "components.motors",
+                    "topic": config.topic_for("motors"),
                     "action": "LAND",
                 },
                 "data": {"mode": "AUTO_LAND", "reason": "emergency"},
@@ -102,7 +103,7 @@ class EmergenseyComponent(BaseComponent):
             "sender": self.component_id,
             "payload": {
                 "target": {
-                    "topic": "components.journal",
+                    "topic": config.topic_for("journal"),
                     "action": "LOG_EVENT",
                 },
                 "data": {

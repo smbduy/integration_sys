@@ -4,6 +4,7 @@ import threading
 import time
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from components.autopilot import config
 
 
 class AutopilotComponent(BaseComponent):
@@ -20,7 +21,7 @@ class AutopilotComponent(BaseComponent):
         self,
         component_id: str,
         bus: SystemBus,
-        topic: str = "components.autopilot",
+        topic: str = "",
     ):
         self._mission: Optional[Dict[str, Any]] = None
         self._state: str = "IDLE"
@@ -33,12 +34,15 @@ class AutopilotComponent(BaseComponent):
         self._kover_active: bool = False
 
         self._control_thread: Optional[threading.Thread] = None
-        self._control_interval_s: float = 0.2
+        self._control_interval_s: float = config.autopilot_control_interval_s()
+        self._nav_poll_interval_s: float = config.autopilot_nav_poll_interval_s()
+        self._request_timeout_s: float = config.autopilot_request_timeout_s()
+        self._last_nav_poll_ts: float = 0.0
 
         super().__init__(
             component_id=component_id,
             component_type="autopilot",
-            topic=topic,
+            topic=(topic or config.component_topic()),
             bus=bus,
         )
 
@@ -54,7 +58,6 @@ class AutopilotComponent(BaseComponent):
     def _register_handlers(self) -> None:
         self.register_handler("mission_load", self._handle_mission_load)
         self.register_handler("cmd", self._handle_cmd)
-        self.register_handler("nav_state", self._handle_nav_state)
         self.register_handler("get_state", self._handle_get_state)
 
     # --------------------------------------------------------------- lifecycle
@@ -127,17 +130,6 @@ class AutopilotComponent(BaseComponent):
 
         return {"ok": True, "state": self._state}
 
-    def _handle_nav_state(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not self._is_trusted_sender(message):
-            return None
-
-        payload = message.get("payload") or {}
-        if not isinstance(payload, dict):
-            return {"ok": False, "error": "invalid_nav"}
-
-        self._last_nav_state = payload
-        return {"ok": True}
-
     def _handle_get_state(self, message: Dict[str, Any]) -> Dict[str, Any]:
         # Запрос состояния может приходить от любых отправителей через монитор.
         steps = self._mission.get("steps") if isinstance(self._mission, dict) else None
@@ -158,10 +150,44 @@ class AutopilotComponent(BaseComponent):
         """Простейший управляющий цикл автопилота."""
         while self._running:
             try:
+                self._poll_navigation_if_due()
                 self._step_control()
             except Exception as exc:  # прототип: только логируем
                 print(f"[{self.component_id}] control loop error: {exc}")
             time.sleep(self._control_interval_s)
+
+    def _poll_navigation_if_due(self) -> None:
+        now = time.monotonic()
+        if (now - self._last_nav_poll_ts) < self._nav_poll_interval_s:
+            return
+        self._last_nav_poll_ts = now
+
+        message = {
+            "action": "proxy_request",
+            "sender": self.component_id,
+            "payload": {
+                "target": {
+                    "topic": config.topic_for("navigation"),
+                    "action": config.navigation_get_state_action(),
+                },
+                "data": {},
+            },
+        }
+        response = self.bus.request(
+            config.security_monitor_topic(),
+            message,
+            timeout=self._request_timeout_s,
+        )
+        if not isinstance(response, dict):
+            return
+
+        target_response = response.get("payload", {}).get("target_response")
+        if not isinstance(target_response, dict):
+            return
+
+        nav_payload = target_response.get("payload")
+        if isinstance(nav_payload, dict):
+            self._last_nav_state = nav_payload
 
     def _step_control(self) -> None:
         if self._last_nav_state is None:
@@ -281,7 +307,7 @@ class AutopilotComponent(BaseComponent):
             "sender": self.component_id,
             "payload": {
                 "target": {
-                    "topic": "components.motors",
+                    "topic": config.topic_for("motors"),
                     "action": "SET_TARGET",
                 },
                 "data": {
@@ -291,7 +317,7 @@ class AutopilotComponent(BaseComponent):
                 },
             },
         }
-        self.bus.publish("components.security_monitor", message)
+        self.bus.publish(config.security_monitor_topic(), message)
 
     def _send_sprayer(self, spray: bool) -> None:
         """Отправка команды опрыскивателю через монитор безопасности."""
@@ -301,7 +327,7 @@ class AutopilotComponent(BaseComponent):
             "sender": self.component_id,
             "payload": {
                 "target": {
-                    "topic": "components.sprayer",
+                    "topic": config.topic_for("sprayer"),
                     "action": "SET_SPRAY",
                 },
                 "data": {
@@ -309,6 +335,6 @@ class AutopilotComponent(BaseComponent):
                 },
             },
         }
-        self.bus.publish("components.security_monitor", message)
+        self.bus.publish(config.security_monitor_topic(), message)
 
 

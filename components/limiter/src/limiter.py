@@ -1,7 +1,10 @@
 from typing import Any, Dict, Optional
+import threading
+import time
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from components.limiter import config
 
 
 class LimiterComponent(BaseComponent):
@@ -17,19 +20,27 @@ class LimiterComponent(BaseComponent):
         self,
         component_id: str,
         bus: SystemBus,
-        topic: str = "components.limiter",
+        topic: str = "",
     ):
         self._mission: Optional[Dict[str, Any]] = None
         self._last_nav: Optional[Dict[str, Any]] = None
         self._last_telemetry: Optional[Dict[str, Any]] = None
         self._state: str = "NORMAL"
-        self._max_distance_from_path_m: float = 10.0
-        self._max_alt_deviation_m: float = 3.0
+        self._max_distance_from_path_m: float = config.limiter_max_distance_from_path_m()
+        self._max_alt_deviation_m: float = config.limiter_max_alt_deviation_m()
+
+        self._control_thread: Optional[threading.Thread] = None
+        self._control_interval_s: float = config.limiter_control_interval_s()
+        self._nav_poll_interval_s: float = config.limiter_nav_poll_interval_s()
+        self._telemetry_poll_interval_s: float = config.limiter_telemetry_poll_interval_s()
+        self._request_timeout_s: float = config.limiter_request_timeout_s()
+        self._last_nav_poll_ts: float = 0.0
+        self._last_telemetry_poll_ts: float = 0.0
 
         super().__init__(
             component_id=component_id,
             component_type="limiter",
-            topic=topic,
+            topic=(topic or config.component_topic()),
             bus=bus,
         )
 
@@ -44,10 +55,19 @@ class LimiterComponent(BaseComponent):
 
     def _register_handlers(self) -> None:
         self.register_handler("mission_load", self._handle_mission_load)
-        self.register_handler("nav_state", self._handle_nav_state)
-        self.register_handler("telemetry_state", self._handle_telemetry_state)
         self.register_handler("update_config", self._handle_update_config)
         self.register_handler("get_state", self._handle_get_state)
+
+    # --------------------------------------------------------------- lifecycle
+
+    def start(self) -> None:
+        super().start()
+        self._control_thread = threading.Thread(
+            target=self._control_loop,
+            name=f"{self.component_id}_control",
+            daemon=True,
+        )
+        self._control_thread.start()
 
     # ---------------------------------------------------------------- handlers
 
@@ -59,27 +79,6 @@ class LimiterComponent(BaseComponent):
         if not isinstance(mission, dict):
             return {"ok": False, "error": "invalid_mission"}
         self._mission = mission
-        return {"ok": True}
-
-    def _handle_nav_state(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not self._is_trusted_sender(message):
-            return None
-        payload = message.get("payload") or {}
-        if not isinstance(payload, dict):
-            return {"ok": False, "error": "invalid_nav"}
-        self._last_nav = payload
-        self._recalculate()
-        return {"ok": True}
-
-    def _handle_telemetry_state(
-        self, message: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        if not self._is_trusted_sender(message):
-            return None
-        payload = message.get("payload") or {}
-        if not isinstance(payload, dict):
-            return {"ok": False, "error": "invalid_telemetry"}
-        self._last_telemetry = payload
         return {"ok": True}
 
     def _handle_update_config(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -104,6 +103,78 @@ class LimiterComponent(BaseComponent):
         }
 
     # -------------------------------------------------------------- core logic
+
+    def _control_loop(self) -> None:
+        while self._running:
+            try:
+                self._poll_navigation_if_due()
+                self._poll_telemetry_if_due()
+                self._recalculate()
+            except Exception as exc:
+                print(f"[{self.component_id}] control loop error: {exc}")
+            time.sleep(self._control_interval_s)
+
+    def _poll_navigation_if_due(self) -> None:
+        now = time.monotonic()
+        if (now - self._last_nav_poll_ts) < self._nav_poll_interval_s:
+            return
+        self._last_nav_poll_ts = now
+
+        message = {
+            "action": "proxy_request",
+            "sender": self.component_id,
+            "payload": {
+                "target": {
+                    "topic": config.topic_for("navigation"),
+                    "action": config.navigation_get_state_action(),
+                },
+                "data": {},
+            },
+        }
+        response = self.bus.request(
+            config.security_monitor_topic(),
+            message,
+            timeout=self._request_timeout_s,
+        )
+        if not isinstance(response, dict):
+            return
+        target_response = response.get("payload", {}).get("target_response")
+        if not isinstance(target_response, dict):
+            return
+        nav_payload = target_response.get("payload")
+        if isinstance(nav_payload, dict):
+            self._last_nav = nav_payload
+
+    def _poll_telemetry_if_due(self) -> None:
+        now = time.monotonic()
+        if (now - self._last_telemetry_poll_ts) < self._telemetry_poll_interval_s:
+            return
+        self._last_telemetry_poll_ts = now
+
+        message = {
+            "action": "proxy_request",
+            "sender": self.component_id,
+            "payload": {
+                "target": {
+                    "topic": config.topic_for("telemetry"),
+                    "action": config.telemetry_get_state_action(),
+                },
+                "data": {},
+            },
+        }
+        response = self.bus.request(
+            config.security_monitor_topic(),
+            message,
+            timeout=self._request_timeout_s,
+        )
+        if not isinstance(response, dict):
+            return
+        target_response = response.get("payload", {}).get("target_response")
+        if not isinstance(target_response, dict):
+            return
+        telem_payload = target_response.get("payload")
+        if isinstance(telem_payload, dict):
+            self._last_telemetry = telem_payload
 
     def _recalculate(self) -> None:
         if not self._mission or not self._last_nav:
@@ -150,12 +221,17 @@ class LimiterComponent(BaseComponent):
                 "max_alt_deviation_m": self._max_alt_deviation_m,
             },
         }
+        # Нет подписок на чужие топики: доставляем событие в emergensy через МБ.
         message = {
-            "action": "event",
+            "action": "proxy_publish",
             "sender": self.component_id,
-            "payload": event_payload,
+            "payload": {
+                "target": {
+                    "topic": config.topic_for("emergensy"),
+                    "action": "limiter_event",
+                },
+                "data": event_payload,
+            },
         }
-        # Публикуем на собственный топик; в реальной системе сообщение
-        # подхватывается через брокер и доставляется компоненту emergensy.
-        self.bus.publish(self.topic, message)
+        self.bus.publish(config.security_monitor_topic(), message)
 

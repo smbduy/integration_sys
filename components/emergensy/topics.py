@@ -1,9 +1,7 @@
-"""Топики и actions для компонента экстренных ситуаций."""
+"""Actions для компонента экстренных ситуаций.
 
-
-class ComponentTopics:
-    EMERGENSY = "components.emergensy"
-
+Топики в системе строятся динамически (см. config.py и SYSTEM_NAME).
+"""
 
 class EmergenseyActions:
     LIMITER_EVENT = "limiter_event"

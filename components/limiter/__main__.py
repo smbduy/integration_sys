@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
+from components.limiter import config
 from components.limiter.src.limiter import LimiterComponent
-from components.limiter.topics import ComponentTopics
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
     component = LimiterComponent(
         component_id=component_id,
         bus=bus,
-        topic=ComponentTopics.LIMITER,
+        topic=config.component_topic(),
     )
     component.start()
 

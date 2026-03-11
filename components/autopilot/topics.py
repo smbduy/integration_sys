@@ -1,13 +1,11 @@
-"""Топики и actions для компонента автопилота."""
+"""Actions для компонента автопилота.
 
-
-class ComponentTopics:
-    AUTOPILOT = "components.autopilot"
+Топики в системе строятся динамически (см. config.py и SYSTEM_NAME).
+"""
 
 
 class AutopilotActions:
     MISSION_LOAD = "mission_load"
     CMD = "cmd"
-    NAV_STATE = "nav_state"
     GET_STATE = "get_state"
 

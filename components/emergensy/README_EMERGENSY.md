@@ -2,11 +2,12 @@
 
 Этот документ описывает, **как другим компонентам системы взаимодействовать с компонентом экстренных ситуаций** через брокер сообщений.
 
-Формат имён топиков в системе:
+Актуальная архитектура:
 
-- `agrodron.<имя_компонента>.<подсистема>`
-
-Для компонента экстренных ситуаций используется префикс `agrodron.emergensy.*`.
+- у каждого компонента **1 входящий топик** `agrodron.<component>`;
+- вход в компонент — **только от МБ** (`security_monitor`);
+- компоненты **не подписываются** на чужие топики;
+- любые данные (включая позицию) получаются только через `proxy_request` (polling) через МБ.
 
 ---
 
@@ -19,7 +20,7 @@
 1. Запустить через монитор безопасности (МБ) **протокол изоляции** (нужно отправить определённую команду в МБ; МБ выполняет изоляцию сам).
 2. Отправить в опрыскиватель команду на **закрытие распыления**.
 3. Отправить в приводы команду на **посадку**.
-4. Получить актуальную позицию от навигации (используется последнее сообщение из `agrodron.navigation.state`) и приложить её к событию/статусу.
+4. (Опционально) Получить актуальную позицию от навигации **через `proxy_request`** и приложить её к событию/журналу.
 
 Компонент не занимается анализом отклонений — это делает `limiter`.
 
@@ -43,11 +44,10 @@
 
 ### 2.2. Формат навигационных данных
 
-Навигация публикует своё состояние в `agrodron.navigation.state`:
+Навигация должна уметь отдавать snapshot состояния по запросу (например `action=get_state` на топике `agrodron.navigation`):
 
 ```json
 {
-  "action": "NAV_STATE",
   "timestamp": "2026-03-09T12:00:01.234Z",
   "lat": 60.123450,
   "lon": 30.123400,
@@ -62,39 +62,34 @@
 
 ---
 
-## 3. Топики компонента `emergensy`
+## 3. Топик и actions компонента `emergensy`
 
-### 3.1. Входящие топики (на которые подписывается `emergensy`)
+### 3.1. Входящий топик
 
-1. **События ограничителя**
-   - Топик: `agrodron.limiter.event`
-   - Кто пишет: `limiter`
-   - Назначение: сигнал о необходимости аварийной посадки.
+1. **Топик**: `agrodron.emergensy`
+2. **Кто пишет**: только МБ при проксировании.
+3. **Ключевой вход**: `action = "limiter_event"`
 
-   `emergensy` реагирует на событие:
-   - `event = "EMERGENCY_LAND_REQUIRED"`
+`emergensy` реагирует на `payload.event = "EMERGENCY_LAND_REQUIRED"`.
 
    Пример входного сообщения:
 
    ```json
    {
-     "timestamp": "2026-03-09T12:00:03.000Z",
-     "mission_id": "mission-1",
-     "event": "EMERGENCY_LAND_REQUIRED",
-     "reason": "DISTANCE_FROM_PATH_EXCEEDED",
-     "details": { "distance_from_path_m": 15.0, "max_distance_from_path_m": 10.0 }
+     "action": "limiter_event",
+     "sender": "security_monitor_...",
+     "payload": {
+       "event": "EMERGENCY_LAND_REQUIRED",
+       "mission_id": "mission-1",
+       "details": { "distance_from_path_m": 15.0, "max_distance_from_path_m": 10.0 }
+     }
    }
    ```
 
-2. **Навигация**
-   - Топик: `agrodron.navigation.state`
-   - Кто пишет: `navigation`
-   - Назначение: актуальная позиция для фиксации факта посадки и формирования событий/статуса.
-
-### 3.2. Исходящие топики (которые пишет `emergensy`)
+### 3.2. Исходящие действия `emergensy` (все через МБ)
 
 1. **Команда в монитор безопасности (МБ) для изоляции**
-   - Топик: `agrodron.security_monitor.control`
+   - Топик: `agrodron.security_monitor`
    - Назначение: запуск изоляции.
 
    Сообщение:
@@ -113,65 +108,54 @@
    > Конкретная реализация изоляции — зона ответственности МБ; `emergensy` только инициирует её.
 
 2. **Команда опрыскивателю на закрытие распыления**
-   - Топик: `agrodron.sprayer.command`
-   - Кто читает: `sprayer`
+   - Через `proxy_publish` в `agrodron.sprayer` / `SET_SPRAY`
 
-   Сообщение:
+   Сообщение в МБ:
 
    ```json
    {
-     "action": "SET_SPRAY",
+     "action": "proxy_publish",
      "sender": "emergensy",
      "payload": {
-       "spray": false
+       "target": { "topic": "agrodron.sprayer", "action": "SET_SPRAY" },
+       "data": { "spray": false }
      }
    }
    ```
 
 3. **Команда приводам на посадку**
-   - Топик: `agrodron.motors.command`
-   - Кто читает: `motors` / `actuators`
+   - Через `proxy_publish` в `agrodron.motors` / `LAND`
 
-   Сообщение:
+   Сообщение в МБ:
 
    ```json
    {
-     "action": "LAND",
+     "action": "proxy_publish",
      "sender": "emergensy",
      "payload": {
-       "mode": "AUTO_LAND"
+       "target": { "topic": "agrodron.motors", "action": "LAND" },
+       "data": { "mode": "AUTO_LAND" }
      }
    }
    ```
 
-4. **События экстренного протокола (для журналирования/телеметрии)**
-   - Топик: `agrodron.emergensy.event`
-   - Кто читает: телеметрия/журнал событий
+4. **Журналирование**
+   - Через `proxy_publish` в `agrodron.journal` / `LOG_EVENT`
 
-   Пример:
-
-   ```json
-   {
-     "timestamp": "2026-03-09T12:00:03.050Z",
-     "event": "EMERGENCY_PROTOCOL_STARTED",
-     "mission_id": "mission-1",
-     "position": { "lat": 60.123450, "lon": 30.123400, "alt_m": 4.9 },
-     "source": "limiter"
-   }
-   ```
-
-5. **Статус компонента (опционально)**
-   - Топик: `agrodron.emergensy.state`
-   - Кто читает: телеметрия/мониторинг
-
-   Пример:
+   Пример в МБ:
 
    ```json
    {
-     "timestamp": "2026-03-09T12:00:03.100Z",
-     "state": "ACTIVE",        // IDLE | ACTIVE | COMPLETED | ERROR
-     "mission_id": "mission-1",
-     "last_step": "LAND"
+     "action": "proxy_publish",
+     "sender": "emergensy",
+     "payload": {
+       "target": { "topic": "agrodron.journal", "action": "LOG_EVENT" },
+       "data": {
+         "event": "EMERGENCY_PROTOCOL_STARTED",
+         "mission_id": "mission-1",
+         "details": { "...": "..." }
+       }
+     }
    }
    ```
 
@@ -179,12 +163,18 @@
 
 ## 4. Логика работы (кратко)
 
-1. Подписаться на `agrodron.limiter.event` и ждать `EMERGENCY_LAND_REQUIRED`.
-2. При получении сигнала:
+1. Получать `limiter_event` на своём топике `agrodron.emergensy` (доставляет МБ).
+2. При получении `EMERGENCY_LAND_REQUIRED`:
    - (а) отправить `ISOLATION_START` в МБ;
    - (б) отправить `SET_SPRAY` с `spray=false` в опрыскиватель;
    - (в) отправить `LAND` в приводы;
-   - (г) взять последнюю известную позицию из `agrodron.navigation.state` и опубликовать `EMERGENCY_PROTOCOL_STARTED` в `agrodron.emergensy.event`.
+   - (г) (опционально) запросить позицию у `navigation` через `proxy_request` и записать событие в `journal`.
 
 Компонент рассчитан на прототип/SITL: достаточно гарантировать **порядок команд и их однозначность**.
+
+---
+
+## 5. Параметры `.env` (основные)
+
+См. `components/emergensy/.env.example`.
 
