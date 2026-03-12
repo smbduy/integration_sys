@@ -14,5 +14,5 @@ COPY . .
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "components.emergensy"]
+CMD ["python", "-m", "agrodron.src.emergensy"]
 

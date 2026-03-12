@@ -11,7 +11,7 @@
 1. Скопируйте шаблон env:
 
 ```bash
-cp components/security_monitor/.env.example components/security_monitor/.env
+cp agrodron/src/security_monitor/.env.example agrodron/src/security_monitor/.env
 ```
 
 2. Укажите admin sender и стартовые политики в `.env`:
@@ -150,7 +150,7 @@ make docker-up
 ### Standalone (без брокера)
 
 ```bash
-python -m components.security_monitor
+python -m agrodron.src.security_monitor
 ```
 
 ### В составе системы (через broker)

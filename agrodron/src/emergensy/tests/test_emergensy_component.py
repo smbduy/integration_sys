@@ -1,5 +1,5 @@
 from broker.system_bus import SystemBus
-from components.emergensy.src.emergensy import EmergenseyComponent
+from agrodron.src.emergensy.src.emergensy import EmergenseyComponent
 
 
 def _make_component() -> EmergenseyComponent:

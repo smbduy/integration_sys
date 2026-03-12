@@ -4,7 +4,7 @@ import threading
 import time
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
-from components.autopilot import config
+from agrodron.src.autopilot import config
 
 
 class AutopilotComponent(BaseComponent):

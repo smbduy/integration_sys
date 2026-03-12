@@ -2,8 +2,8 @@ import os
 import tempfile
 
 from broker.system_bus import SystemBus
-from components.journal import config
-from components.journal.src.journal import JournalComponent
+from agrodron.src.journal import config
+from agrodron.src.journal.src.journal import JournalComponent
 
 
 def _make_component(tmp_path: str) -> JournalComponent:

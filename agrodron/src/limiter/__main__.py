@@ -1,6 +1,6 @@
 """Точка входа для LimiterComponent в составе системы.
 
-Запуск: python -m components.limiter
+Запуск: python -m agrodron.src.limiter
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from components.limiter import config
-from components.limiter.src.limiter import LimiterComponent
+from agrodron.src.limiter import config
+from agrodron.src.limiter.src.limiter import LimiterComponent
 
 
 def main() -> None:

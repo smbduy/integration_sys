@@ -1,0 +1,2 @@
+"""Mission handler component package."""
+

@@ -1,5 +1,5 @@
 """Тесты парсера WPL."""
-from components.mission_handler.src.wpl_parser import parse_wpl
+from agrodron.src.mission_handler.src.wpl_parser import parse_wpl
 
 
 # Минимальный валидный WPL: заголовок + одна точка

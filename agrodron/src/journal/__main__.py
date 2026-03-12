@@ -1,6 +1,6 @@
 """Точка входа для JournalComponent в составе системы.
 
-Запуск: python -m components.journal
+Запуск: python -m agrodron.src.journal
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from components.journal import config
-from components.journal.src.journal import JournalComponent
+from agrodron.src.journal import config
+from agrodron.src.journal.src.journal import JournalComponent
 
 
 def main() -> None:

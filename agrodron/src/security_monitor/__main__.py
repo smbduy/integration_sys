@@ -1,6 +1,6 @@
 """Точка входа для SecurityMonitorComponent как отдельного компонента.
 
-Запуск: python -m components.security_monitor
+Запуск: python -m agrodron.src.security_monitor
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from components.security_monitor import config
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
+from agrodron.src.security_monitor import config
+from agrodron.src.security_monitor.src.security_monitor import SecurityMonitorComponent
 
 
 def main() -> None:

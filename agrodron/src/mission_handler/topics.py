@@ -7,7 +7,7 @@
 class ComponentTopics:
     @staticmethod
     def mission_handler() -> str:
-        from components.mission_handler.config import component_topic
+        from agrodron.src.mission_handler.config import component_topic
         return component_topic()
 
 

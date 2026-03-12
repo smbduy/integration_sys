@@ -3,8 +3,8 @@ from typing import Any, Dict, Optional
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
 
-from components.mission_handler import config
-from components.mission_handler.src.wpl_parser import parse_wpl
+from agrodron.src.mission_handler import config
+from agrodron.src.mission_handler.src.wpl_parser import parse_wpl
 
 
 class MissionHandlerComponent(BaseComponent):

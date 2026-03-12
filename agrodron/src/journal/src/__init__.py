@@ -1,0 +1,2 @@
+"""Journal implementation package."""
+

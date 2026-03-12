@@ -1,5 +1,5 @@
 from broker.system_bus import SystemBus
-from components.mission_handler.src.mission_handler import MissionHandlerComponent
+from agrodron.src.mission_handler.src.mission_handler import MissionHandlerComponent
 
 
 class DummyBus(SystemBus):

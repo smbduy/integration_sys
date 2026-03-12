@@ -4,8 +4,8 @@
 services:
   security_monitor:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/security_monitor/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/security_monitor/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${SECURITY_MONITOR_SYSTEM_NAME:-agrodron}
@@ -26,8 +26,8 @@ services:
 
   journal:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/journal/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/journal/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${JOURNAL_SYSTEM_NAME:-agrodron}
@@ -48,8 +48,8 @@ services:
 
   navigation:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/navigation/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/navigation/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${NAVIGATION_SYSTEM_NAME:-agrodron}
@@ -73,8 +73,8 @@ services:
 
   autopilot:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/autopilot/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/autopilot/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${AUTOPILOT_SYSTEM_NAME:-agrodron}
@@ -98,8 +98,8 @@ services:
 
   limiter:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/limiter/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/limiter/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${LIMITER_SYSTEM_NAME:-agrodron}
@@ -127,8 +127,8 @@ services:
 
   emergensy:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/emergensy/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/emergensy/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${EMERGENSY_SYSTEM_NAME:-agrodron}
@@ -148,8 +148,8 @@ services:
 
   mission_handler:
     build:
-      context: ../..
-      dockerfile: systems/agrodron/src/mission_handler/docker/Dockerfile
+      context: ..
+      dockerfile: agrodron/src/mission_handler/docker/Dockerfile
     profiles: ["kafka", "mqtt"]
     environment:
       - SYSTEM_NAME=${MISSION_HANDLER_SYSTEM_NAME:-agrodron}

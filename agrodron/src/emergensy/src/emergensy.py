@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
-from components.emergensy import config
+from agrodron.src.emergensy import config
 
 
 class EmergenseyComponent(BaseComponent):

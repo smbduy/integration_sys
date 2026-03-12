@@ -1,7 +1,7 @@
 .PHONY: help prepare check-tools check-docker unit-test integration-test tests docker-up docker-down docker-logs
 
-PIPENV_PIPFILE = ../../config/Pipfile
-PYTEST_CONFIG = ../../config/pyproject.toml
+PIPENV_PIPFILE = ../config/Pipfile
+PYTEST_CONFIG = ../config/pyproject.toml
 GENERATED = .generated
 DOCKER_COMPOSE = docker compose -f $(GENERATED)/docker-compose.yml --env-file $(GENERATED)/.env
 
@@ -17,7 +17,7 @@ help:
 	@echo "make tests             - Все тесты"
 
 prepare:
-	@cd ../.. && PIPENV_PIPFILE=config/Pipfile pipenv run python scripts/prepare_system.py systems/agrodron
+	@cd .. && PIPENV_PIPFILE=config/Pipfile pipenv run python scripts/prepare_system.py agrodron
 
 check-tools:
 	@command -v pipenv >/dev/null 2>&1 || (echo "pipenv not found. Run: make init (repo root)"; exit 1)

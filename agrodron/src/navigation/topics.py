@@ -7,12 +7,12 @@
 class ComponentTopics:
     @staticmethod
     def navigation() -> str:
-        from components.navigation.config import component_topic
+        from agrodron.src.navigation.config import component_topic
         return component_topic()
 
     @staticmethod
     def sitl_adapter() -> str:
-        from components.navigation.config import sitl_adapter_topic
+        from agrodron.src.navigation.config import sitl_adapter_topic
         return sitl_adapter_topic()
 
 

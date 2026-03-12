@@ -1,5 +1,5 @@
 from broker.system_bus import SystemBus
-from components.limiter.src.limiter import LimiterComponent
+from agrodron.src.limiter.src.limiter import LimiterComponent
 
 
 def _make_component() -> LimiterComponent:

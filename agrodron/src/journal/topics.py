@@ -7,7 +7,7 @@
 class ComponentTopics:
     @staticmethod
     def journal() -> str:
-        from components.journal.config import component_topic
+        from agrodron.src.journal.config import component_topic
         return component_topic()
 
 

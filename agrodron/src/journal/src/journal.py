@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
 
-from components.journal import config
+from agrodron.src.journal import config
 
 
 class JournalComponent(BaseComponent):

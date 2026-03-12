@@ -5,7 +5,7 @@
 нормализует форматы sitl.position.v1 / Redis в единый NAV_STATE,
 хранит последнее состояние и отдаёт его по запросу (get_state).
 
-Взаимодействие с SITL — только через монитор (proxy_request → components.sitl_adapter).
+Взаимодействие с SITL — только через монитор (proxy_request → agrodron.sitl_adapter).
 SITL-адаптер читает MQTT sitl.position.v1 или Redis drone:{id}:state и возвращает JSON.
 """
 import math
@@ -16,8 +16,8 @@ from typing import Any, Dict, Optional
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
 
-from components.navigation import config
-from components.navigation.src.sitl_normalizer import normalize_sitl_to_nav_state
+from agrodron.src.navigation import config
+from agrodron.src.navigation.src.sitl_normalizer import normalize_sitl_to_nav_state
 
 
 class NavigationComponent(BaseComponent):

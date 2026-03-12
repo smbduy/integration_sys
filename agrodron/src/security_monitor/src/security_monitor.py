@@ -7,7 +7,7 @@ from typing import Dict, Any, Tuple, Set, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
-from components.security_monitor import config
+from agrodron.src.security_monitor import config
 
 
 PolicyKey = Tuple[str, str, str]
