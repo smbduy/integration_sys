@@ -169,6 +169,80 @@ services:
     networks: [drones_net]
     restart: unless-stopped
 
+  motors:
+    build:
+      context: ../..
+      dockerfile: components/motors/docker/Dockerfile
+    profiles: ["kafka", "mqtt"]
+    environment:
+      - SYSTEM_NAME=${MOTORS_SYSTEM_NAME:-agrodron}
+      - COMPONENT_ID=${MOTORS_COMPONENT_ID:-motors}
+      - COMPONENT_TOPIC=${MOTORS_COMPONENT_TOPIC:-}
+      - BROKER_TYPE=${BROKER_TYPE:-kafka}
+      - BROKER_USER=${MOTORS_BROKER_USER:-${ADMIN_USER:-admin}}
+      - BROKER_PASSWORD=${MOTORS_BROKER_PASSWORD:-${ADMIN_PASSWORD:-admin123}}
+      - SECURITY_MONITOR_TOPIC=${MOTORS_SECURITY_MONITOR_TOPIC:-}
+      - SITL_MODE=${MOTORS_SITL_MODE:-mock}
+      - SITL_COMMANDS_TOPIC=${MOTORS_SITL_COMMANDS_TOPIC:-}
+      - MOTORS_TEMPERATURE_C_DEFAULT=${MOTORS_MOTORS_TEMPERATURE_C_DEFAULT:-55.0}
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    networks: [drones_net]
+    restart: unless-stopped
+
+  sprayer:
+    build:
+      context: ../..
+      dockerfile: components/sprayer/docker/Dockerfile
+    profiles: ["kafka", "mqtt"]
+    environment:
+      - SYSTEM_NAME=${SPRAYER_SYSTEM_NAME:-agrodron}
+      - COMPONENT_ID=${SPRAYER_COMPONENT_ID:-sprayer}
+      - COMPONENT_TOPIC=${SPRAYER_COMPONENT_TOPIC:-}
+      - BROKER_TYPE=${BROKER_TYPE:-kafka}
+      - BROKER_USER=${SPRAYER_BROKER_USER:-${ADMIN_USER:-admin}}
+      - BROKER_PASSWORD=${SPRAYER_BROKER_PASSWORD:-${ADMIN_PASSWORD:-admin123}}
+      - SECURITY_MONITOR_TOPIC=${SPRAYER_SECURITY_MONITOR_TOPIC:-}
+      - JOURNAL_TOPIC=${SPRAYER_JOURNAL_TOPIC:-}
+      - SITL_MODE=${SPRAYER_SITL_MODE:-mock}
+      - SITL_COMMANDS_TOPIC=${SPRAYER_SITL_COMMANDS_TOPIC:-}
+      - SPRAYER_TEMPERATURE_C_DEFAULT=${SPRAYER_SPRAYER_TEMPERATURE_C_DEFAULT:-40.0}
+      - SPRAYER_TANK_LEVEL_PCT_DEFAULT=${SPRAYER_SPRAYER_TANK_LEVEL_PCT_DEFAULT:-75.0}
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    networks: [drones_net]
+    restart: unless-stopped
+
+  telemetry:
+    build:
+      context: ../..
+      dockerfile: components/telemetry/docker/Dockerfile
+    profiles: ["kafka", "mqtt"]
+    environment:
+      - SYSTEM_NAME=${TELEMETRY_SYSTEM_NAME:-agrodron}
+      - COMPONENT_ID=${TELEMETRY_COMPONENT_ID:-telemetry}
+      - COMPONENT_TOPIC=${TELEMETRY_COMPONENT_TOPIC:-}
+      - BROKER_TYPE=${BROKER_TYPE:-kafka}
+      - BROKER_USER=${TELEMETRY_BROKER_USER:-${ADMIN_USER:-admin}}
+      - BROKER_PASSWORD=${TELEMETRY_BROKER_PASSWORD:-${ADMIN_PASSWORD:-admin123}}
+      - SECURITY_MONITOR_TOPIC=${TELEMETRY_SECURITY_MONITOR_TOPIC:-}
+      - MOTORS_TOPIC=${TELEMETRY_MOTORS_TOPIC:-}
+      - SPRAYER_TOPIC=${TELEMETRY_SPRAYER_TOPIC:-}
+      - MOTORS_GET_STATE_ACTION=${TELEMETRY_MOTORS_GET_STATE_ACTION:-get_state}
+      - SPRAYER_GET_STATE_ACTION=${TELEMETRY_SPRAYER_GET_STATE_ACTION:-get_state}
+      - TELEMETRY_POLL_INTERVAL_S=${TELEMETRY_TELEMETRY_POLL_INTERVAL_S:-0.5}
+      - TELEMETRY_REQUEST_TIMEOUT_S=${TELEMETRY_TELEMETRY_REQUEST_TIMEOUT_S:-2.0}
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - PYTHONUNBUFFERED=1
+    networks: [drones_net]
+    restart: unless-stopped
+
 networks:
   drones_net:
     external: true
