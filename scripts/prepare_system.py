@@ -170,6 +170,14 @@ def prepare_system(system_dir: str):
     for svc_name, svc in component_services.items():
         merged["services"][svc_name] = svc
 
+    # --- Merge top-level volumes (for persistent component storage) ---
+    broker_volumes = deepcopy(broker_compose.get("volumes", {})) or {}
+    system_volumes = deepcopy(system_compose.get("volumes", {})) or {}
+    if broker_volumes or system_volumes:
+        merged["volumes"] = {}
+        merged["volumes"].update(broker_volumes)
+        merged["volumes"].update(system_volumes)
+
     # --- Write output ---
     compose_out = output_dir / "docker-compose.yml"
     env_out = output_dir / ".env"

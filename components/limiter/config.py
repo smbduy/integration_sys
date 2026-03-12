@@ -18,6 +18,10 @@ def security_monitor_topic() -> str:
     return (os.environ.get("SECURITY_MONITOR_TOPIC") or topic_for("security_monitor")).strip()
 
 
+def journal_topic() -> str:
+    return (os.environ.get("JOURNAL_TOPIC") or topic_for("journal")).strip()
+
+
 def _get_float(name: str, default: float, *, min_value: Optional[float] = None) -> float:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":

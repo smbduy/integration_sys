@@ -138,7 +138,7 @@ class LimiterComponent(BaseComponent):
         )
         if not isinstance(response, dict):
             return
-        target_response = response.get("payload", {}).get("target_response")
+        target_response = response.get("target_response")
         if not isinstance(target_response, dict):
             return
         nav_payload = target_response.get("payload")
@@ -169,7 +169,7 @@ class LimiterComponent(BaseComponent):
         )
         if not isinstance(response, dict):
             return
-        target_response = response.get("payload", {}).get("target_response")
+        target_response = response.get("target_response")
         if not isinstance(target_response, dict):
             return
         telem_payload = target_response.get("payload")
@@ -207,19 +207,23 @@ class LimiterComponent(BaseComponent):
                 self._state = "EMERGENCY"
                 self._publish_emergency(distance_m, alt_dev)
         elif distance_m > 0.5 * self._max_distance_from_path_m or alt_dev > 0.5 * self._max_alt_deviation_m:
+            if self._state != "WARNING":
+                self._log_to_journal("LIMITER_DEVIATION_WARNING", {"distance_m": distance_m, "alt_deviation_m": alt_dev})
             self._state = "WARNING"
         else:
             self._state = "NORMAL"
 
     def _publish_emergency(self, distance_m: float, alt_dev: float) -> None:
+        details = {
+            "distance_from_path_m": distance_m,
+            "max_distance_from_path_m": self._max_distance_from_path_m,
+            "alt_deviation_m": alt_dev,
+            "max_alt_deviation_m": self._max_alt_deviation_m,
+        }
+        self._log_to_journal("LIMITER_EMERGENCY_LAND_REQUIRED", details)
         event_payload = {
             "event": "EMERGENCY_LAND_REQUIRED",
-            "details": {
-                "distance_from_path_m": distance_m,
-                "max_distance_from_path_m": self._max_distance_from_path_m,
-                "alt_deviation_m": alt_dev,
-                "max_alt_deviation_m": self._max_alt_deviation_m,
-            },
+            "details": details,
         }
         # Нет подписок на чужие топики: доставляем событие в emergensy через МБ.
         message = {
@@ -234,4 +238,16 @@ class LimiterComponent(BaseComponent):
             },
         }
         self.bus.publish(config.security_monitor_topic(), message)
+
+    def _log_to_journal(self, event: str, details: Dict[str, Any]) -> None:
+        """Отправка события в журнал через монитор безопасности."""
+        msg = {
+            "action": "proxy_publish",
+            "sender": self.component_id,
+            "payload": {
+                "target": {"topic": config.journal_topic(), "action": "LOG_EVENT"},
+                "data": {"event": event, "source": "limiter", "details": details},
+            },
+        }
+        self.bus.publish(config.security_monitor_topic(), msg)
 

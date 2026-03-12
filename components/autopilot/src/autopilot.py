@@ -89,6 +89,7 @@ class AutopilotComponent(BaseComponent):
         self._mission = mission
         self._current_step_index = 0 if mission.get("steps") else None
         self._state = "MISSION_LOADED"
+        self._log_to_journal("AUTOPILOT_MISSION_LOADED", {"mission_id": mission.get("mission_id"), "state": self._state})
         return {"ok": True, "state": self._state}
 
     def _handle_cmd(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -97,6 +98,7 @@ class AutopilotComponent(BaseComponent):
 
         payload = message.get("payload") or {}
         command = str(payload.get("command") or "").upper()
+        old_state = self._state
 
         if command == "START":
             if self._mission is None:
@@ -117,17 +119,21 @@ class AutopilotComponent(BaseComponent):
         elif command == "EMERGENCY_STOP":
             # Полная остановка автопилота по аварийной команде.
             self._state = "EMERGENCY_STOP"
+            self._log_to_journal("AUTOPILOT_EMERGENCY_STOP", {"old_state": old_state})
         elif command == "KOVER":
             # Команда «Ковер»: инициировать посадку до земли.
             # Управляющий цикл будет уменьшать высоту до 0 и после посадки
             # переведёт автопилот в состояние PAUSED (ожидание возобновления).
             self._kover_active = True
+            self._log_to_journal("AUTOPILOT_KOVER_ACTIVE", {})
             # Оставляем состояние EXECUTING, чтобы контрольный цикл работал.
             if self._state not in ("EXECUTING", "PAUSED"):
                 self._state = "EXECUTING"
         else:
             return {"ok": False, "error": "unknown_command"}
 
+        if old_state != self._state:
+            self._log_to_journal("AUTOPILOT_STATE_CHANGE", {"old_state": old_state, "new_state": self._state, "command": command})
         return {"ok": True, "state": self._state}
 
     def _handle_get_state(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -181,7 +187,7 @@ class AutopilotComponent(BaseComponent):
         if not isinstance(response, dict):
             return
 
-        target_response = response.get("payload", {}).get("target_response")
+        target_response = response.get("target_response")
         if not isinstance(target_response, dict):
             return
 
@@ -212,6 +218,7 @@ class AutopilotComponent(BaseComponent):
                 # Считаем, что квадрокоптер сел на землю.
                 self._kover_active = False
                 self._state = "PAUSED"
+                self._log_to_journal("AUTOPILOT_KOVER_LANDED", {})
             return
 
         if self._mission is None:
@@ -229,6 +236,7 @@ class AutopilotComponent(BaseComponent):
 
         if self._current_step_index >= len(steps):
             self._state = "COMPLETED"
+            self._log_to_journal("AUTOPILOT_MISSION_COMPLETED", {"mission_id": self._mission.get("mission_id")})
             return
 
         step = steps[self._current_step_index]
@@ -266,6 +274,7 @@ class AutopilotComponent(BaseComponent):
             else:
                 # Последняя точка достигнута
                 self._state = "COMPLETED"
+                self._log_to_journal("AUTOPILOT_MISSION_COMPLETED", {"mission_id": self._mission.get("mission_id")})
                 self._send_motors_target(
                     heading_deg=self._last_nav_state.get("heading_deg", 0.0),
                     speed_mps=0.0,
@@ -336,5 +345,17 @@ class AutopilotComponent(BaseComponent):
             },
         }
         self.bus.publish(config.security_monitor_topic(), message)
+
+    def _log_to_journal(self, event: str, details: Dict[str, Any]) -> None:
+        """Отправка события в журнал через монитор безопасности."""
+        msg = {
+            "action": "proxy_publish",
+            "sender": self.component_id,
+            "payload": {
+                "target": {"topic": config.journal_topic(), "action": "LOG_EVENT"},
+                "data": {"event": event, "source": "autopilot", "details": details},
+            },
+        }
+        self.bus.publish(config.security_monitor_topic(), msg)
 
 

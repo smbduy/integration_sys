@@ -1,3 +1,7 @@
+"""Конфигурация компонента mission_handler.
+
+Чтение SYSTEM_NAME, топиков и параметров через переменные окружения.
+"""
 import os
 from typing import Optional
 
@@ -11,11 +15,15 @@ def topic_for(component_name: str) -> str:
 
 
 def component_topic() -> str:
-    return (os.environ.get("COMPONENT_TOPIC") or topic_for("autopilot")).strip()
+    return (os.environ.get("COMPONENT_TOPIC") or topic_for("mission_handler")).strip()
 
 
 def security_monitor_topic() -> str:
     return (os.environ.get("SECURITY_MONITOR_TOPIC") or topic_for("security_monitor")).strip()
+
+
+def autopilot_topic() -> str:
+    return (os.environ.get("AUTOPILOT_TOPIC") or topic_for("autopilot")).strip()
 
 
 def journal_topic() -> str:
@@ -33,18 +41,5 @@ def _get_float(name: str, default: float, *, min_value: Optional[float] = None) 
     return value
 
 
-def autopilot_control_interval_s() -> float:
-    return _get_float("AUTOPILOT_CONTROL_INTERVAL_S", 0.2, min_value=0.01)
-
-
-def autopilot_nav_poll_interval_s() -> float:
-    return _get_float("AUTOPILOT_NAV_POLL_INTERVAL_S", 0.2, min_value=0.01)
-
-
-def autopilot_request_timeout_s() -> float:
-    return _get_float("AUTOPILOT_REQUEST_TIMEOUT_S", 2.0, min_value=0.1)
-
-
-def navigation_get_state_action() -> str:
-    return (os.environ.get("NAVIGATION_GET_STATE_ACTION") or "get_state").strip()
-
+def mission_handler_request_timeout_s() -> float:
+    return _get_float("MISSION_HANDLER_REQUEST_TIMEOUT_S", 10.0, min_value=0.1)
