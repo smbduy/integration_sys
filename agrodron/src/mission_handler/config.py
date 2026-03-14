@@ -30,6 +30,19 @@ def journal_topic() -> str:
     return (os.environ.get("JOURNAL_TOPIC") or topic_for("journal")).strip()
 
 
+def sitl_kafka_servers() -> str:
+    return (os.environ.get("SITL_KAFKA_SERVERS") or os.environ.get("KAFKA_BOOTSTRAP_SERVERS") or "localhost:9092").strip()
+
+
+def sitl_kafka_home_topic() -> str:
+    return (os.environ.get("SITL_KAFKA_HOME_TOPIC") or "sitl-drone-home").strip()
+
+
+def sitl_drone_id() -> str:
+    """Идентификатор дрона для SITL."""
+    return (os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
+
+
 def _get_float(name: str, default: float, *, min_value: Optional[float] = None) -> float:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":

@@ -1,10 +1,14 @@
+import json
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from kafka import KafkaProducer
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
 
-from agrodron.src.mission_handler import config
-from agrodron.src.mission_handler.src.wpl_parser import parse_wpl
+from components.mission_handler import config
+from components.mission_handler.src.wpl_parser import parse_wpl
 
 
 class MissionHandlerComponent(BaseComponent):
@@ -30,6 +34,7 @@ class MissionHandlerComponent(BaseComponent):
     ):
         self._last_mission: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
+        self._kafka_producer: Optional[KafkaProducer] = None
 
         super().__init__(
             component_id=component_id,
@@ -142,6 +147,7 @@ class MissionHandlerComponent(BaseComponent):
             event="MISSION_HANDLER_MISSION_SENT_TO_AUTOPILOT",
             details={"mission_id": mid},
         )
+        self._send_home_to_sitl(mission)
         return {"ok": True}
 
     def _handle_validate_only(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -213,6 +219,76 @@ class MissionHandlerComponent(BaseComponent):
                     return False, f"missing_{field}_in_step_{idx}"
 
         return True, ""
+
+    # ------------------------------------------------------------ SITL HOME
+
+    def _build_home_message(self, step: Dict[str, Any]) -> Dict[str, Any]:
+        """Формирует сообщение HOME в формате SITL из первого waypoint."""
+        lat = float(step.get("lat") or 0.0)
+        lon = float(step.get("lon") or 0.0)
+        alt_m = float(step.get("alt_m") or 0.0)
+        now = datetime.now(timezone.utc)
+        time_str = now.strftime("%H%M%S.000")
+        date_str = now.strftime("%d%m%y")
+        lat_nmea = f"{int(abs(lat)):02d}{int((abs(lat) % 1) * 60):02d}.{int(round(((abs(lat) % 1) * 60) % 1 * 10000)):04d}"
+        lon_nmea = f"{int(abs(lon)):03d}{int((abs(lon) % 1) * 60):02d}.{int(round(((abs(lon) % 1) * 60) % 1 * 10000)):04d}"
+        lat_dir = "N" if lat >= 0 else "S"
+        lon_dir = "E" if lon >= 0 else "W"
+        return {
+            "drone_id": config.sitl_drone_id(),
+            "msg_id": str(uuid.uuid4()),
+            "timestamp": now.isoformat().replace("+00:00", "Z"),
+            "nmea": {
+                "rmc": {
+                    "talker_id": "GN",
+                    "time": time_str,
+                    "status": "A",
+                    "latitude": lat_nmea,
+                    "lat_dir": lat_dir,
+                    "longitude": lon_nmea,
+                    "lon_dir": lon_dir,
+                    "speed_knots": 0.0,
+                    "course_degrees": 0.0,
+                    "date": date_str,
+                },
+                "gga": {
+                    "talker_id": "GN",
+                    "time": time_str,
+                    "latitude": lat_nmea,
+                    "lat_dir": lat_dir,
+                    "longitude": lon_nmea,
+                    "lon_dir": lon_dir,
+                    "quality": 1,
+                    "satellites": 10,
+                    "hdop": 0.8,
+                },
+            },
+            "derived": {
+                "lat_decimal": round(lat, 6),
+                "lon_decimal": round(lon, 6),
+                "altitude_msl": round(alt_m, 2),
+                "gps_valid": True,
+                "satellites_used": 10,
+                "position_accuracy_hdop": 0.8,
+            },
+        }
+
+    def _send_home_to_sitl(self, mission: Dict[str, Any]) -> None:
+        """Отправляет HOME в Kafka sitl-drone-home."""
+        steps = mission.get("steps") if isinstance(mission, dict) else []
+        if not steps:
+            return
+        home_msg = self._build_home_message(steps[0])
+        try:
+            if self._kafka_producer is None:
+                self._kafka_producer = KafkaProducer(
+                    bootstrap_servers=config.sitl_kafka_servers(),
+                    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                )
+            self._kafka_producer.send(config.sitl_kafka_home_topic(), value=home_msg)
+            self._kafka_producer.flush()
+        except Exception:
+            pass
 
     # -------------------------------------------------------------- journal log
 

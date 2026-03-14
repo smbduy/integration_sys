@@ -1,6 +1,6 @@
 """Точка входа для NavigationComponent в составе системы.
 
-Запуск: python -m agrodron.src.navigation
+Запуск: python -m components.navigation
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from agrodron.src.navigation import config
-from agrodron.src.navigation.src.navigation import NavigationComponent
+from components.navigation import config
+from components.navigation.src.navigation import NavigationComponent
 
 
 def main() -> None:

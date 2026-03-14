@@ -1,2 +1,0 @@
-"""Emergensy implementation package."""
-

@@ -11,8 +11,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN ln -s /app/agrodron/src /app/components
+
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "agrodron.src.navigation"]
+CMD ["python", "-m", "components.navigation"]
 

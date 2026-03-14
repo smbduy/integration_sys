@@ -1,6 +1,6 @@
 """Точка входа для AutopilotComponent в составе системы.
 
-Запуск: python -m agrodron.src.autopilot
+Запуск: python -m components.autopilot
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from agrodron.src.autopilot import config
-from agrodron.src.autopilot.src.autopilot import AutopilotComponent
+from components.autopilot import config
+from components.autopilot.src.autopilot import AutopilotComponent
 
 
 def main() -> None:

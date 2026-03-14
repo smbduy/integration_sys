@@ -1,5 +1,5 @@
 from broker.system_bus import SystemBus
-from agrodron.src.autopilot.src.autopilot import AutopilotComponent
+from components.autopilot.src.autopilot import AutopilotComponent
 
 
 def _make_component() -> AutopilotComponent:

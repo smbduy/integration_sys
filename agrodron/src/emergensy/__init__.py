@@ -1,2 +1,0 @@
-"""Emergensy (emergency) component package."""
-

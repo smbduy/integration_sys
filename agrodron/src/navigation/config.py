@@ -23,7 +23,20 @@ def security_monitor_topic() -> str:
 
 
 def sitl_adapter_topic() -> str:
+    """Устаревшее: навигация читает Redis напрямую. Оставлено для совместимости."""
     return (os.environ.get("SITL_ADAPTER_TOPIC") or topic_for("sitl_adapter")).strip()
+
+
+def sitl_redis_url() -> str:
+    return (os.environ.get("SITL_REDIS_URL") or os.environ.get("REDIS_URL") or "redis://localhost:6379/0").strip()
+
+
+def sitl_redis_key_prefix() -> str:
+    return (os.environ.get("SITL_REDIS_KEY_PREFIX") or "SITL").strip()
+
+
+def sitl_drone_id() -> str:
+    return (os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
 
 
 def journal_topic() -> str:

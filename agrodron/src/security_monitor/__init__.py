@@ -1,2 +1,0 @@
-"""Security monitor component package."""
-

@@ -4,7 +4,7 @@ import time
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
-from agrodron.src.limiter import config
+from components.limiter import config
 
 
 class LimiterComponent(BaseComponent):

@@ -1,6 +1,6 @@
 """Точка входа для EmergenseyComponent в составе системы.
 
-Запуск: python -m agrodron.src.emergensy
+Запуск: python -m components.emergensy
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from agrodron.src.emergensy import config
-from agrodron.src.emergensy.src.emergensy import EmergenseyComponent
+from components.emergensy import config
+from components.emergensy.src.emergensy import EmergenseyComponent
 
 
 def main() -> None:

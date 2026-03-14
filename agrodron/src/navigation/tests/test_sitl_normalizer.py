@@ -1,5 +1,5 @@
 """Тесты для sitl_normalizer."""
-from agrodron.src.navigation.src.sitl_normalizer import normalize_sitl_to_nav_state
+from components.navigation.src.sitl_normalizer import normalize_sitl_to_nav_state
 
 
 def test_sitl_position_v1():

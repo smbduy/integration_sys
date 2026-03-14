@@ -1,2 +1,0 @@
-"""Security monitor implementation package."""
-

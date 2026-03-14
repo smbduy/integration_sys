@@ -1,6 +1,6 @@
 from broker.system_bus import SystemBus
-from agrodron.src.navigation import config
-from agrodron.src.navigation.src.navigation import NavigationComponent
+from components.navigation import config
+from components.navigation.src.navigation import NavigationComponent
 
 
 def _make_component() -> NavigationComponent:

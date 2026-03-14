@@ -1,6 +1,6 @@
 """Точка входа для MissionHandlerComponent в составе системы.
 
-Запуск: python -m agrodron.src.mission_handler
+Запуск: python -m components.mission_handler
 """
 import os
 import signal
@@ -8,8 +8,8 @@ import sys
 import time
 
 from broker.bus_factory import create_system_bus
-from agrodron.src.mission_handler import config
-from agrodron.src.mission_handler.src.mission_handler import MissionHandlerComponent
+from components.mission_handler import config
+from components.mission_handler.src.mission_handler import MissionHandlerComponent
 
 
 def main() -> None:

@@ -7,7 +7,7 @@ from typing import Dict, Any, Tuple, Set, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
-from agrodron.src.security_monitor import config
+from components.security_monitor import config
 
 
 PolicyKey = Tuple[str, str, str]
@@ -29,11 +29,14 @@ class SecurityMonitorComponent(BaseComponent):
             else os.environ.get("POLICY_ADMIN_SENDER", "")
         ).strip()
         raw_policies = security_policies if security_policies is not None else os.environ.get("SECURITY_POLICIES", "")
-        # Разворачиваем шаблоны, чтобы можно было писать топики как
-        # "${SYSTEM_NAME}.navigation" в SECURITY_POLICIES.
+        # Разворачиваем шаблоны: "${SYSTEM_NAME}", "$SYSTEM_NAME", "$${SYSTEM_NAME}" -> system_name().
         if isinstance(raw_policies, str) and raw_policies:
             sys_name = config.system_name()
-            raw_policies = raw_policies.replace("${SYSTEM_NAME}", sys_name).replace("$SYSTEM_NAME", sys_name)
+            raw_policies = (
+                raw_policies.replace("$${SYSTEM_NAME}", sys_name)
+                .replace("${SYSTEM_NAME}", sys_name)
+                .replace("$SYSTEM_NAME", sys_name)
+            )
         self._policies: Set[PolicyKey] = self._parse_policies(raw_policies)
         self._mode: str = "NORMAL"  # NORMAL | ISOLATED
 

@@ -1,2 +1,0 @@
-"""Journal component package."""
-
