@@ -2,5 +2,8 @@
 paho-mqtt>=2.0.0
 kafka-python>=2.0.0
 
+# SITL adapter (Redis)
+redis>=5.0.0
+
 # SDK (BaseSystem HTTP API)
 flask>=3.0.0

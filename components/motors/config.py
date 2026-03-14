@@ -29,6 +29,19 @@ def sitl_commands_topic() -> str:
     return (os.environ.get("SITL_COMMANDS_TOPIC") or default).strip()
 
 
+def sitl_kafka_servers() -> str:
+    return (os.environ.get("SITL_KAFKA_SERVERS") or os.environ.get("KAFKA_BOOTSTRAP_SERVERS") or "localhost:9092").strip()
+
+
+def sitl_kafka_commands_topic() -> str:
+    return (os.environ.get("SITL_KAFKA_COMMANDS_TOPIC") or "input-messages").strip()
+
+
+def sitl_drone_id() -> str:
+    """Идентификатор дрона для SITL (drone_001, drone_002 и т.д.)."""
+    return (os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
+
+
 def _get_float(name: str, default: float, *, min_value: Optional[float] = None) -> float:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":

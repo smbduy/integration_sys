@@ -1,10 +1,11 @@
 """
 Нормализатор данных от SITL-адаптера в формат NAV_STATE.
 
-Поддерживает форматы из «обновленная архитектура ситла»:
+Поддерживает форматы:
 - sitl.position.v1: {"drone_id","lat","lon","alt","vx"}
-- Redis-подобный (drone:{id}:state): lat, lon, alt, vx, vy, vz, heading, status
-- Устаревший NMEA-derived: derived.lat_decimal, nmea.gga и т.п.
+- Redis (drone:{id}:state): lat, lon, alt, vx, vy, vz, heading, status
+- Redis (SITL:{drone_id}): {"data":{...},"verifier_stage":"SITL-v1"} — новый формат SITL
+- NMEA-derived: derived.lat_decimal, nmea.gga и т.п.
 """
 import math
 from datetime import datetime, timezone
@@ -51,6 +52,29 @@ def normalize_sitl_to_nav_state(raw: Dict[str, Any], config: Dict[str, Any] | No
 
     if not isinstance(raw, dict):
         return result
+
+    # --- SITL Redis новый формат: {data: {...}, verifier_stage: "SITL-v1"} ---
+    if raw.get("verifier_stage") == "SITL-v1" or raw.get("core_stage") == "SITL-v1":
+        inner = raw.get("data") or raw
+        if isinstance(inner, dict):
+            derived = inner.get("derived") or {}
+            if isinstance(derived, dict):
+                result["lat"] = _float_val(derived, "lat_decimal")
+                result["lon"] = _float_val(derived, "lon_decimal")
+                result["alt_m"] = _float_val(derived, "altitude_msl")
+            result["lat"] = result["lat"] or _float_val(inner, "lat")
+            result["lon"] = result["lon"] or _float_val(inner, "lon")
+            result["alt_m"] = result["alt_m"] or _float_val(inner, "alt", _float_val(inner, "altitude_msl", 0.0))
+            vx = _float_val(inner, "vx")
+            vy = _float_val(inner, "vy")
+            result["ground_speed_mps"] = math.sqrt(vx * vx + vy * vy) if (vx or vy) else 0.0
+            result["heading_deg"] = _float_val(inner, "heading") or (
+                (math.degrees(math.atan2(vx, vy)) + 360.0) % 360.0 if (vx or vy) else 0.0
+            )
+            if inner.get("drone_id"):
+                result["drone_id"] = str(inner["drone_id"])
+            result["gps_valid"] = result["lat"] != 0 or result["lon"] != 0
+            return result
 
     # --- Pass-through: уже в формате NAV_STATE (alt_m, heading_deg, ground_speed_mps) ---
     if "alt_m" in raw or "ground_speed_mps" in raw or "heading_deg" in raw:

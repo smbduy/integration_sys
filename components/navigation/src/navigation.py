@@ -1,18 +1,15 @@
 """
 Компонент навигации агродрона.
 
-Получает навигационные данные от SITL-адаптера (через монитор безопасности),
-нормализует форматы sitl.position.v1 / Redis в единый NAV_STATE,
-хранит последнее состояние и отдаёт его по запросу (get_state).
-
-Взаимодействие с SITL — только через монитор (proxy_request → components.sitl_adapter).
-SITL-адаптер читает MQTT sitl.position.v1 или Redis drone:{id}:state и возвращает JSON.
+Читает данные SITL напрямую из Redis (SITL:{drone_id}),
+нормализует в единый NAV_STATE, хранит и отдаёт по get_state.
 """
-import math
+import json
 import threading
 import time
 from typing import Any, Dict, Optional
 
+from redis import Redis
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
 
@@ -24,8 +21,8 @@ class NavigationComponent(BaseComponent):
     """
     Компонент навигации агродрона.
 
-    - Опрашивает SITL-адаптер через монитор безопасности (10 Гц);
-    - Нормализует форматы SITL (sitl.position.v1, Redis state) в NAV_STATE;
+    - Читает данные SITL из Redis (SITL:{drone_id}) с периодом 10 Гц;
+    - Нормализует форматы SITL в NAV_STATE;
     - Хранит последнее состояние и отдаёт по get_state;
     - Принимает обновление конфигурации (nav_state, update_config).
     """
@@ -40,6 +37,7 @@ class NavigationComponent(BaseComponent):
         self._config: Dict[str, Any] = {}
         self._lock = threading.Lock()
         self._housekeeping_thread: Optional[threading.Thread] = None
+        self._redis: Optional[Redis] = None
 
         super().__init__(
             component_id=component_id,
@@ -122,7 +120,7 @@ class NavigationComponent(BaseComponent):
     # ----------------------------------------------------------- housekeeping
 
     def _housekeeping_loop(self) -> None:
-        """Опрос SITL-адаптера через монитор безопасности (10 Гц)."""
+        """Опрос Redis SITL (10 Гц)."""
         interval = config.navigation_poll_interval_s()
         while self._running:
             try:
@@ -131,46 +129,33 @@ class NavigationComponent(BaseComponent):
                 print(f"[{self.component_id}] SITL poll error: {exc}")
             time.sleep(interval)
 
+    def _read_sitl_from_redis(self, drone_id: str) -> Optional[Dict[str, Any]]:
+        """Читает состояние дрона из Redis SITL:{drone_id}."""
+        if self._redis is None:
+            try:
+                self._redis = Redis.from_url(config.sitl_redis_url(), decode_responses=True)
+                self._redis.ping()
+            except Exception:
+                return None
+        key = f"{config.sitl_redis_key_prefix()}:{drone_id}"
+        try:
+            raw = self._redis.get(key)
+            if raw is None:
+                return None
+            return json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            return None
+
     def _poll_sitl_once(self) -> None:
-        """
-        Один шаг опроса SITL-адаптера через монитор.
-
-        SITL-адаптер (bridge) читает MQTT sitl.position.v1 или Redis drone:{id}:state
-        и возвращает JSON. Навигация нормализует его в NAV_STATE.
-        """
-        request_message: Dict[str, Any] = {
-            "action": "proxy_request",
-            "sender": self.component_id,
-            "payload": {
-                "target": {
-                    "topic": config.sitl_adapter_topic(),
-                    "action": "get_nav_state",
-                },
-                "data": {"drone_id": self._config.get("drone_id")},
-            },
-        }
-
-        response = self.bus.request(
-            topic=config.security_monitor_topic(),
-            message=request_message,
-            timeout=config.navigation_request_timeout_s(),
-        )
-        if not response:
-            return
-
-        # Ответ монитора: target_response или payload
-        sitl_resp = response.get("target_response") or response.get("payload") or response
-        if not isinstance(sitl_resp, dict):
-            return
-
-        raw = sitl_resp.get("nav_state", sitl_resp)
-        if not isinstance(raw, dict):
+        """Читает SITL из Redis, нормализует в NAV_STATE."""
+        drone_id = self._config.get("drone_id") or config.sitl_drone_id()
+        raw = self._read_sitl_from_redis(drone_id)
+        if raw is None:
             return
 
         normalized = normalize_sitl_to_nav_state(raw, self._config)
         with self._lock:
             self._last_nav_state = normalized
-            drone_id = normalized.get("drone_id") or self._config.get("drone_id")
 
         # Публикация в общий поток (для подписчиков, если есть)
         self._publish_nav_state(normalized)

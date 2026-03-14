@@ -203,14 +203,18 @@ class AutopilotComponent(BaseComponent):
         if self._kover_active:
             try:
                 alt = float(self._last_nav_state.get("alt_m"))
+                lat = float(self._last_nav_state.get("lat", 0.0))
+                lon = float(self._last_nav_state.get("lon", 0.0))
             except (TypeError, ValueError):
                 return
 
             ground_alt = 0.0
             self._send_motors_target(
-                heading_deg=self._last_nav_state.get("heading_deg", 0.0),
-                speed_mps=0.0,
+                vx=0.0, vy=0.0, vz=-1.0,  # плавное снижение
                 alt_m=ground_alt,
+                lat=lat, lon=lon,
+                heading_deg=self._last_nav_state.get("heading_deg", 0.0),
+                drop=False,
             )
             self._send_sprayer(False)
 
@@ -276,9 +280,11 @@ class AutopilotComponent(BaseComponent):
                 self._state = "COMPLETED"
                 self._log_to_journal("AUTOPILOT_MISSION_COMPLETED", {"mission_id": self._mission.get("mission_id")})
                 self._send_motors_target(
-                    heading_deg=self._last_nav_state.get("heading_deg", 0.0),
-                    speed_mps=0.0,
+                    vx=0.0, vy=0.0, vz=0.0,
                     alt_m=alt,
+                    lat=lat, lon=lon,
+                    heading_deg=self._last_nav_state.get("heading_deg", 0.0),
+                    drop=False,
                 )
                 self._send_sprayer(False)
                 return
@@ -286,31 +292,79 @@ class AutopilotComponent(BaseComponent):
         # В состоянии PAUSED отправляем "удержание": нулевая скорость, опрыскиватель выключен.
         if self._state == "PAUSED":
             self._send_motors_target(
-                heading_deg=self._last_nav_state.get("heading_deg", 0.0),
-                speed_mps=0.0,
+                vx=0.0, vy=0.0, vz=0.0,
                 alt_m=alt,
+                lat=lat, lon=lon,
+                heading_deg=self._last_nav_state.get("heading_deg", 0.0),
+                drop=False,
             )
             self._send_sprayer(False)
             return
 
-        # EXECUTING: расчёт простого управляющего воздействия
+        # EXECUTING: расчёт векторов скорости и направления
         heading_rad = math.atan2(d_lon, d_lat) if (d_lat != 0 or d_lon != 0) else 0.0
         heading_deg = (math.degrees(heading_rad) + 360.0) % 360.0
 
         speed_mps = float(step.get("speed_mps") or 5.0)
         target_alt = t_alt
 
-        self._send_motors_target(
+        # Вычисляем 3 компоненты вектора скорости для SITL
+        vx, vy, vz = self._compute_velocity_vectors(
             heading_deg=heading_deg,
-            speed_mps=speed_mps,
-            alt_m=target_alt,
+            ground_speed_mps=speed_mps,
+            current_alt=alt,
+            target_alt=target_alt,
         )
 
         spray_flag = bool(step.get("spray"))
+        self._send_motors_target(
+            vx=vx, vy=vy, vz=vz,
+            alt_m=target_alt,
+            lat=lat, lon=lon,
+            heading_deg=heading_deg,
+            drop=spray_flag,
+        )
         self._send_sprayer(spray_flag)
 
-    def _send_motors_target(self, heading_deg: float, speed_mps: float, alt_m: float) -> None:
-        """Отправка команды приводам через монитор безопасности."""
+    def _compute_velocity_vectors(
+        self,
+        heading_deg: float,
+        ground_speed_mps: float,
+        current_alt: float,
+        target_alt: float,
+        max_climb_rate_mps: float = 3.0,
+    ) -> tuple[float, float, float]:
+        """
+        Вычисляет 3 компоненты вектора скорости (vx, vy, vz) для SITL.
+
+        vx — скорость на восток (м/с)
+        vy — скорость на север (м/с)
+        vz — вертикальная скорость (м/с), положительная — вверх
+        """
+        heading_rad = math.radians(heading_deg)
+        vx = ground_speed_mps * math.sin(heading_rad)
+        vy = ground_speed_mps * math.cos(heading_rad)
+
+        alt_diff = target_alt - current_alt
+        if abs(alt_diff) < 0.2:
+            vz = 0.0
+        else:
+            vz = max(-max_climb_rate_mps, min(max_climb_rate_mps, alt_diff * 2.0))
+
+        return (vx, vy, vz)
+
+    def _send_motors_target(
+        self,
+        vx: float,
+        vy: float,
+        vz: float,
+        alt_m: float,
+        lat: float,
+        lon: float,
+        heading_deg: float,
+        drop: bool = False,
+    ) -> None:
+        """Отправка команды приводам с векторами скорости для SITL."""
         message = {
             "action": "proxy_publish",
             "sender": self.component_id,
@@ -320,9 +374,14 @@ class AutopilotComponent(BaseComponent):
                     "action": "SET_TARGET",
                 },
                 "data": {
-                    "heading_deg": heading_deg,
-                    "ground_speed_mps": speed_mps,
+                    "vx": vx,
+                    "vy": vy,
+                    "vz": vz,
                     "alt_m": alt_m,
+                    "lat": lat,
+                    "lon": lon,
+                    "heading_deg": heading_deg,
+                    "drop": drop,
                 },
             },
         }
