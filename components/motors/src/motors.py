@@ -1,46 +1,26 @@
 from __future__ import annotations
 
-import json
 import math
 import time
-import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from broker.system_bus import SystemBus
-from kafka import KafkaProducer
 from sdk.base_component import BaseComponent
 
 from components.motors import config
 
-
-def _decimal_to_nmea_lat(lat: float) -> tuple[str, str]:
-    """Десятичные градусы -> NMEA DDMM.MMMM, dir (N/S)."""
-    lat = max(-90.0, min(90.0, lat))
-    deg = int(abs(lat))
-    mins = (abs(lat) - deg) * 60.0
-    nmea = f"{deg:02d}{int(mins):02d}.{int(round((mins % 1) * 10000)):04d}"
-    return (nmea, "N" if lat >= 0 else "S")
+# Лимиты по схеме SITL (ARCHITECTURE.md): vx,vy [-50..50], vz [-10..10], mag_heading [0..359.9]
+_VX_VY_MIN, _VX_VY_MAX = -50.0, 50.0
+_VZ_MIN, _VZ_MAX = -10.0, 10.0
+_MAG_HEADING_MIN, _MAG_HEADING_MAX = 0.0, 359.9
 
 
-def _decimal_to_nmea_lon(lon: float) -> tuple[str, str]:
-    """Десятичные градусы -> NMEA DDDMM.MMMM, dir (E/W)."""
-    lon = max(-180.0, min(180.0, lon))
-    deg = int(abs(lon))
-    mins = (abs(lon) - deg) * 60.0
-    nmea = f"{deg:03d}{int(mins):02d}.{int(round((mins % 1) * 10000)):04d}"
-    return (nmea, "E" if lon >= 0 else "W")
-
-
-def _vx_vy_to_course_speed(vx: float, vy: float) -> tuple[float, float]:
-    """vx, vy (м/с) -> course_degrees, speed_knots. North=0, East=90."""
-    speed_mps = math.sqrt(vx * vx + vy * vy)
-    if speed_mps < 1e-6:
-        return (0.0, 0.0)
-    heading_rad = math.atan2(vx, vy)  # North=0, East=pi/2
-    course_deg = (math.degrees(heading_rad) + 360.0) % 360.0
-    speed_knots = speed_mps * 1.94384
-    return (course_deg, speed_knots)
+def _vx_vy_to_mag_heading(vx: float, vy: float) -> float:
+    """Курс в градусах (0..360): North=0, East=90. При нулевой скорости — 0."""
+    if abs(vx) < 1e-9 and abs(vy) < 1e-9:
+        return 0.0
+    heading_rad = math.atan2(vx, vy)
+    return (math.degrees(heading_rad) + 360.0) % 360.0
 
 
 class MotorsMode:
@@ -66,7 +46,6 @@ class MotorsComponent(BaseComponent):
         self._last_target: Optional[Dict[str, Any]] = None
         self._last_cmd_ts: float = 0.0
         self._temperature_c: float = config.motors_temperature_c_default()
-        self._kafka_producer: Optional[KafkaProducer] = None
 
         super().__init__(
             component_id=component_id,
@@ -153,89 +132,54 @@ class MotorsComponent(BaseComponent):
         }
 
     def _build_sitl_command(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Формирует команду в формате SITL Command Message."""
-        lat = float(data.get("lat") or 0.0)
-        lon = float(data.get("lon") or 0.0)
-        alt_m = float(data.get("alt_m") or 0.0)
-        vx = float(data.get("vx") or 0.0)
-        vy = float(data.get("vy") or 0.0)
-        vz = float(data.get("vz") or 0.0)
-        drop = bool(data.get("drop", False))
-        emergency_landing = bool(data.get("emergency_landing", False))
-
-        course_deg, speed_knots = _vx_vy_to_course_speed(vx, vy)
-        lat_nmea, lat_dir = _decimal_to_nmea_lat(lat)
-        lon_nmea, lon_dir = _decimal_to_nmea_lon(lon)
-
-        now = datetime.now(timezone.utc)
-        time_str = now.strftime("%H%M%S.000")
-        date_str = now.strftime("%d%m%y")
+        """
+        Формирует команду в формате SITL (ARCHITECTURE.md): sitl/commands.
+        Обязательные поля: drone_id, vx, vy, vz, mag_heading.
+        """
+        vx = max(_VX_VY_MIN, min(_VX_VY_MAX, float(data.get("vx") or 0.0)))
+        vy = max(_VX_VY_MIN, min(_VX_VY_MAX, float(data.get("vy") or 0.0)))
+        vz = max(_VZ_MIN, min(_VZ_MAX, float(data.get("vz") or 0.0)))
+        heading_deg = data.get("heading_deg")
+        if heading_deg is not None:
+            mag_heading = max(
+                _MAG_HEADING_MIN,
+                min(_MAG_HEADING_MAX, (float(heading_deg) % 360.0)),
+            )
+        else:
+            mag_heading = max(
+                _MAG_HEADING_MIN,
+                min(_MAG_HEADING_MAX, round(_vx_vy_to_mag_heading(vx, vy), 1)),
+            )
 
         return {
             "drone_id": config.sitl_drone_id(),
-            "msg_id": str(uuid.uuid4()),
-            "timestamp": now.isoformat().replace("+00:00", "Z"),
-            "nmea": {
-                "rmc": {
-                    "talker_id": "GN",
-                    "time": time_str,
-                    "status": "A",
-                    "latitude": lat_nmea,
-                    "lat_dir": lat_dir,
-                    "longitude": lon_nmea,
-                    "lon_dir": lon_dir,
-                    "speed_knots": round(speed_knots, 2),
-                    "course_degrees": round(course_deg, 1),
-                    "date": date_str,
-                },
-                "gga": {
-                    "talker_id": "GN",
-                    "time": time_str,
-                    "latitude": lat_nmea,
-                    "lat_dir": lat_dir,
-                    "longitude": lon_nmea,
-                    "lon_dir": lon_dir,
-                    "quality": 1,
-                    "satellites": 10,
-                    "hdop": 0.8,
-                },
-            },
-            "derived": {
-                "lat_decimal": round(lat, 6),
-                "lon_decimal": round(lon, 6),
-                "altitude_msl": round(alt_m, 2),
-                "speed_vertical_ms": round(vz, 2),
-            },
-            "actions": {
-                "drop": drop,
-                "emergency_landing": emergency_landing,
-            },
+            "vx": round(vx, 2),
+            "vy": round(vy, 2),
+            "vz": round(vz, 2),
+            "mag_heading": round(mag_heading, 1),
         }
 
-    def _get_kafka_producer(self) -> Optional[KafkaProducer]:
-        if self._kafka_producer is None and config.sitl_mode() != "mock":
-            try:
-                self._kafka_producer = KafkaProducer(
-                    bootstrap_servers=config.sitl_kafka_servers(),
-                    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                )
-            except Exception:
-                pass
-        return self._kafka_producer
-
     def _emit_sitl_command(self, command: Dict[str, Any]) -> None:
-        """Публикует команду в SITL: Kafka (если не mock) и/или локальный топик."""
+        """
+        Публикует команду в SITL через монитор безопасности (proxy_publish).
+        Топик и брокер задаются в ENV (SITL_COMMANDS_TOPIC, брокер системы).
+        """
         sitl_msg = self._build_sitl_command(command)
-        if config.sitl_mode() != "mock":
-            prod = self._get_kafka_producer()
-            if prod:
-                try:
-                    prod.send(config.sitl_kafka_commands_topic(), value=sitl_msg)
-                    prod.flush()
-                except Exception:
-                    pass
-        self.bus.publish(
-            config.sitl_commands_topic(),
-            {"source": "motors", "command": sitl_msg, "raw_target": command},
-        )
+        payload = {
+            "source": "motors",
+            "command": sitl_msg,
+            "raw_target": command,
+        }
+        message = {
+            "action": "proxy_publish",
+            "sender": self.component_id,
+            "payload": {
+                "target": {
+                    "topic": config.sitl_commands_topic(),
+                    "action": "command",
+                },
+                "data": payload,
+            },
+        }
+        self.bus.publish(config.security_monitor_topic(), message)
 
