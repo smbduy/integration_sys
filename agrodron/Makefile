@@ -1,70 +1,92 @@
-.PHONY: help prepare check-tools check-docker unit-test integration-test tests docker-up docker-down docker-logs run-all full-run
+.PHONY: help prepare unit-test integration-test test docker-up docker-down docker-logs docker-logs-% docker-ps status
 
-PIPENV_PIPFILE = ../config/Pipfile
-PYTEST_CONFIG = ../config/pyproject.toml
-GENERATED = .generated
-DOCKER_COMPOSE = docker compose -f $(GENERATED)/docker-compose.yml --env-file $(GENERATED)/.env
+# Все команды pipenv/pytest выполняются из корня репозитория (cd ..)
+PIPENV       = PIPENV_PIPFILE=config/Pipfile pipenv
+PYTEST       = $(PIPENV) run pytest -c config/pyproject.toml
+GENERATED    = .generated
+COMPOSE      = docker compose -f $(GENERATED)/docker-compose.yml --env-file $(GENERATED)/.env
+BROKER       = $${BROKER_TYPE:-mqtt}
 
 help:
-	@echo "make prepare           - Собрать docker-compose + .env из компонентов"
-	@echo "make check-tools       - Проверить pipenv/pytest"
-	@echo "make check-docker      - Проверить доступ к Docker daemon"
-	@echo "make docker-up         - Запустить систему (prepare + docker compose up)"
-	@echo "make docker-down       - Остановить систему"
-	@echo "make docker-logs       - Логи"
-	@echo "make unit-test         - Unit тесты компонентов"
-	@echo "make integration-test  - Интеграционные тесты (docker required)"
-	@echo "make tests             - Все тесты (unit + integration)"
-	@echo "make run-all           - Все тесты подряд с описаниями (unit + полный прогон системы)"
-	@echo "make full-run          - Поднять систему, run-all, остановить (реальный запуск дрона)"
+	@echo ""
+	@echo "  Подготовка"
+	@echo "    make prepare             Собрать $(GENERATED)/docker-compose.yml + .env"
+	@echo ""
+	@echo "  Тесты (без Docker)"
+	@echo "    make unit-test           Unit-тесты компонентов (components/*/tests/)"
+	@echo "    make integration-test    Интеграционные тесты in-process (tests/integration/)"
+	@echo "    make test                Все тесты (unit + integration)"
+	@echo ""
+	@echo "  Docker"
+	@echo "    make docker-up           Поднять систему (prepare + docker compose up)"
+	@echo "    make docker-down         Остановить и удалить контейнеры"
+	@echo "    make docker-ps           Статус контейнеров"
+	@echo "    make docker-logs         Логи всех контейнеров (follow)"
+	@echo "    make docker-logs-<svc>   Логи конкретного сервиса, например:"
+	@echo "                               make docker-logs-security_monitor"
+	@echo "                               make docker-logs-autopilot"
+	@echo ""
+	@echo "  Полный цикл"
+	@echo "    make status              prepare + test + docker-up + docker-ps"
+	@echo ""
+
+# ---------------------------------------------------------------------------
+#  Подготовка
+# ---------------------------------------------------------------------------
 
 prepare:
-	@cd .. && PIPENV_PIPFILE=config/Pipfile pipenv run python scripts/prepare_system.py agrodron
+	@cd .. && $(PIPENV) run python scripts/prepare_system.py agrodron
 
-check-tools:
-	@command -v pipenv >/dev/null 2>&1 || (echo "pipenv not found. Run: make init (repo root)"; exit 1)
-	@PIPENV_PIPFILE=$(PIPENV_PIPFILE) pipenv run python -m pytest --version >/dev/null 2>&1 || \
-		(echo "pytest not available in Pipenv. Run: PIPENV_PIPFILE=config/Pipfile pipenv install --dev pytest"; exit 1)
+# ---------------------------------------------------------------------------
+#  Тесты
+# ---------------------------------------------------------------------------
 
-check-docker:
-	@docker ps >/dev/null 2>&1 || (echo "Docker daemon unavailable. Check docker group or run with sudo."; exit 1)
+unit-test:
+	@echo "=== Unit-тесты компонентов ==="
+	@cd .. && $(PYTEST) agrodron/components/*/tests/ -v --tb=short
+
+integration-test:
+	@echo "=== Интеграционные тесты (in-process) ==="
+	@cd .. && $(PYTEST) agrodron/tests/integration/ -v --tb=short
+
+test: unit-test integration-test
+	@echo ""
+	@echo "Все тесты пройдены."
+
+# ---------------------------------------------------------------------------
+#  Docker
+# ---------------------------------------------------------------------------
 
 docker-up: prepare
 	@set -a && . $(GENERATED)/.env && set +a && \
-		$(DOCKER_COMPOSE) --profile $${BROKER_TYPE:-kafka} up -d --build
+		$(COMPOSE) --profile $(BROKER) up -d --build
+	@echo ""
+	@echo "Система запущена. Проверьте статус: make docker-ps"
+	@echo "Логи:                          make docker-logs"
 
 docker-down:
-	-$(DOCKER_COMPOSE) --profile kafka down 2>/dev/null
-	-$(DOCKER_COMPOSE) --profile mqtt down 2>/dev/null
+	-@$(COMPOSE) --profile mqtt  down --remove-orphans 2>/dev/null
+	-@$(COMPOSE) --profile kafka down --remove-orphans 2>/dev/null
+
+docker-ps:
+	@set -a && . $(GENERATED)/.env 2>/dev/null && set +a && \
+		$(COMPOSE) --profile $(BROKER) ps
 
 docker-logs:
 	@set -a && . $(GENERATED)/.env && set +a && \
-		$(DOCKER_COMPOSE) --profile $${BROKER_TYPE:-kafka} logs -f
+		$(COMPOSE) --profile $(BROKER) logs -f --tail=100
 
-unit-test: check-tools
-	@PIPENV_PIPFILE=$(PIPENV_PIPFILE) pipenv run pytest -c $(PYTEST_CONFIG) src -vv -rA -s
-
-integration-test: check-tools check-docker docker-up
-	@echo "Waiting for broker and components..."
-	@sleep 45
+docker-logs-%:
 	@set -a && . $(GENERATED)/.env && set +a && \
-		PIPENV_PIPFILE=$(PIPENV_PIPFILE) pipenv run pytest -c $(PYTEST_CONFIG) tests/test_integration.py -vv -rA -s
-	-$(MAKE) docker-down
+		$(COMPOSE) --profile $(BROKER) logs -f --tail=100 $*
 
-# Все тесты подряд: unit, затем полный прогон (ОРВД, SITL, МБ и т.д.) с краткими описаниями
-run-all: check-tools
-	@echo "========== Unit-тесты компонентов =========="
-	@PIPENV_PIPFILE=$(PIPENV_PIPFILE) pipenv run pytest -c $(PYTEST_CONFIG) src -v --tb=short -rA
+# ---------------------------------------------------------------------------
+#  Полный цикл
+# ---------------------------------------------------------------------------
+
+status: prepare test
 	@echo ""
-	@echo "========== Полный прогон системы (интеграция) =========="
-	@set -a && . $(GENERATED)/.env 2>/dev/null && set +a && \
-		PIPENV_PIPFILE=$(PIPENV_PIPFILE) pipenv run pytest -c $(PYTEST_CONFIG) tests/test_full_system_run.py tests/test_integration.py -v --tb=short -rA || true
-
-# Одна команда: поднять систему, прогнать все тесты, остановить
-full-run: check-tools check-docker docker-up
-	@echo "Ожидание запуска брокера и компонентов..."
-	@sleep 45
-	@$(MAKE) run-all
-	-@$(MAKE) docker-down
-
-tests: unit-test integration-test
+	@echo "=== Запуск Docker ==="
+	@$(MAKE) docker-up
+	@sleep 5
+	@$(MAKE) docker-ps

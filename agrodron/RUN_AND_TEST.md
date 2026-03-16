@@ -20,7 +20,7 @@ cd ..
 
 ## 1. Поднять систему (Docker)
 
-Все компоненты уже имеют рабочие `.env` в `agrodron/src/<component>/.env` с топиками `agrodron.*`. Генератор собирает из них общий `.generated/.env` и единый `docker-compose`.
+Все компоненты уже имеют рабочие `.env` в `agrodron/components/<component>/.env` с топиками `agrodron.*`. Генератор собирает из них общий `.generated/.env` и единый `docker-compose`.
 
 ### 1.1. Выбор брокера
 
@@ -40,7 +40,7 @@ make docker-up
 
 Эта команда:
 
-1. Выполняет **prepare** — скрипт `scripts/prepare_system.py agrodron` читает `.env` из каждого компонента в `agrodron/src/`, собирает общий `agrodron/.generated/docker-compose.yml` и `agrodron/.generated/.env`.
+1. Выполняет **prepare** — скрипт `scripts/prepare_system.py agrodron` читает `.env` из каждого компонента в `agrodron/components/`, собирает общий `agrodron/.generated/docker-compose.yml` и `agrodron/.generated/.env`.
 2. Поднимает брокер (Kafka или Mosquitto) и все сервисы системы с профилем `kafka` или `mqtt`.
 
 Эквивалент вручную (без make):
@@ -64,15 +64,80 @@ docker ps
 
 ### 1.4. Логи
 
+**Все контейнеры разом:**
+
 ```bash
 cd agrodron
 make docker-logs
 ```
 
-Или:
+**Логи при интеграционных тестах (proxy_request, отладка):**
+
+Логирование уже включено в коде (security_monitor, BaseComponent). Логи пишутся в stdout контейнеров. Чтобы их видеть:
+
+1. Поднимите систему и **не останавливайте** контейнеры:
+   ```bash
+   cd agrodron
+   make docker-up
+   # подождите ~45 с
+   ```
+
+2. В **другом терминале** включите просмотр логов нужного сервиса:
+   ```bash
+   cd agrodron
+   make docker-logs-sm      # только security_monitor (входящие proxy_request, ответы/таймауты)
+   # или
+   make docker-logs-motors  # только motors (входящие запросы, отправка ответа)
+   ```
+
+3. В **первом терминале** запустите интеграционные тесты:
+   ```bash
+   cd agrodron
+   set -a && . .generated/.env && set +a
+   export MQTT_BROKER=localhost MQTT_PORT=1883 BROKER_TYPE=mqtt BROKER_USER=admin BROKER_PASSWORD=admin_secret_123
+   pipenv run pytest -c ../config/pyproject.toml tests/test_full_system_run.py tests/test_integration.py -v -s
+   ```
+
+   В окне с `make docker-logs-sm` появятся строки вида:
+   - `[security_monitor] proxy_request: sender=telemetry -> agrodron.motors action=get_state`
+   - `[security_monitor] proxy_request -> bus.request(agrodron.motors, timeout=10.0s)`
+   - либо `proxy_request: no response from agrodron.motors (timeout or error)`, либо `got response from agrodron.motors, replying to client`.
+
+**После прогона (контейнеры ещё запущены):**
 
 ```bash
-docker compose -f agrodron/.generated/docker-compose.yml --env-file agrodron/.generated/.env --profile mqtt logs -f
+# последние 200 строк security_monitor
+docker compose -f .generated/docker-compose.yml --env-file .generated/.env --profile mqtt logs --tail=200 security_monitor
+
+# последние 100 строк motors
+docker compose -f .generated/docker-compose.yml --env-file .generated/.env --profile mqtt logs --tail=100 motors
+```
+
+Или через make (из каталога agrodron):
+
+```bash
+docker compose -f .generated/docker-compose.yml --env-file .generated/.env --profile mqtt logs --tail=200 security_monitor
+```
+
+**Как по логам понять, почему падают тесты**
+
+Смотрите логи security_monitor (`make docker-logs-sm`). Что искать:
+
+| В логах | Что это значит | Что делать |
+|--------|--------------------------------|------------|
+| **`proxy_request denied by policy: sender=... topic=... action=...`** | Монитор отклонил запрос: в политиках нет правила для этой пары (sender, topic, action) или политики в контейнер не попали / подставились с ошибкой. | Проверить, что в `.generated/.env` есть `SECURITY_MONITOR_SECURITY_POLICIES` и что в нём подставлен `SYSTEM_NAME` (должно быть `agrodron.navigation`, а не `.navigation`). Перегенерировать: `make prepare`, затем заново `make docker-up`. |
+| **`proxy_request -> bus.request(agrodron.motors, timeout=10.0s)`** и дальше **`no response from agrodron.motors (timeout or error)`** | Политика разрешила запрос, но целевой компонент (motors) не ответил за 10 с. | Смотреть логи целевого контейнера (`make docker-logs-motors`): приходит ли запрос (`request action=get_state reply_to=...`), уходит ли ответ (`response sent to ...`). Если запрос не приходит — топики/сеть; если не уходит ответ — ошибка в компоненте или в reply_to. |
+| **`got response from agrodron.motors, replying to client`** | Монитор получил ответ от motors и отправил его тесту. | Если тест всё равно падает по таймауту — возможна потеря ответа до теста (топик reply, сеть). Проверить топики и что тест подписан на свой `replies/...`. |
+
+Кратко: **`denied by policy`** → чинить политики (и подстановку SYSTEM_NAME); **`no response from X`** → чинить целевой компонент или доставку ответа до монитора.
+
+**Важно:** после изменения `.generated/.env` (например после `make prepare` или правок политик) контейнеры продолжают работать со **старым** окружением. Чтобы применить новый `.env`, нужно перезапустить стек:
+
+```bash
+cd agrodron
+make docker-down
+make docker-up
+# подождать ~45 с, затем запускать тесты или смотреть логи
 ```
 
 ### 1.5. Остановка
@@ -106,7 +171,7 @@ make check-tools
 
 ### 2.2. Unit-тесты (без Docker)
 
-Тесты компонентов лежат в `agrodron/src/*/tests/`.
+Тесты компонентов лежат в `agrodron/components/*/tests/`.
 
 ```bash
 cd agrodron
@@ -117,17 +182,17 @@ make unit-test
 
 ```bash
 cd agrodron
-PIPENV_PIPFILE=../config/Pipfile pipenv run pytest -c ../config/pyproject.toml src -vv -rA -s
+PIPENV_PIPFILE=../config/Pipfile pipenv run pytest -c ../config/pyproject.toml components -vv -rA -s
 ```
 
 Будут выполнены, в том числе:
 
-- `src/autopilot/tests/`
-- `src/emergensy/tests/`
-- `src/journal/tests/`
-- `src/limiter/tests/`
-- `src/mission_handler/tests/`
-- `src/navigation/tests/`
+- `components/autopilot/tests/`
+- `components/emergensy/tests/`
+- `components/journal/tests/`
+- `components/limiter/tests/`
+- `components/mission_handler/tests/`
+- `components/navigation/tests/`
 
 ### 2.3. Интеграционные тесты (с Docker)
 
@@ -184,25 +249,27 @@ make run-all
 
 ## 4. Краткая шпаргалка
 
-| Действие | Команда (из каталога `agrodron`) |
-|----------|-----------------------------------|
-| **Полный прогон (поднять + тесты + остановить)** | `make full-run` |
-| Все тесты подряд с описаниями (unit + полный прогон) | `make run-all` |
-| Собрать .generated и поднять систему | `make docker-up` |
-| Остановить систему | `make docker-down` |
-| Логи контейнеров | `make docker-logs` |
-| Только пересобрать .generated | `make prepare` |
-| Unit-тесты | `make unit-test` |
-| Интеграционные тесты (Docker) | `make integration-test` |
-| Всё: unit + integration | `make tests` |
-| Справка по целям | `make help` |
+
+| Действие                                             | Команда (из каталога `agrodron`) |
+| ---------------------------------------------------- | -------------------------------- |
+| **Полный прогон (поднять + тесты + остановить)**     | `make full-run`                  |
+| Все тесты подряд с описаниями (unit + полный прогон) | `make run-all`                   |
+| Собрать .generated и поднять систему                 | `make docker-up`                 |
+| Остановить систему                                   | `make docker-down`               |
+| Логи контейнеров                                     | `make docker-logs`               |
+| Только пересобрать .generated                        | `make prepare`                   |
+| Unit-тесты                                           | `make unit-test`                 |
+| Интеграционные тесты (Docker)                        | `make integration-test`          |
+| Всё: unit + integration                              | `make tests`                     |
+| Справка по целям                                     | `make help`                      |
+
 
 ---
 
 ## 5. Переменные окружения при запуске
 
 - **BROKER_TYPE** — `kafka` или `mqtt` (учитывается при `make docker-up` и `make docker-logs`).
-- Конфигурация компонентов берётся из их `.env` в `agrodron/src/<component>/.env` при каждом `make prepare`; итог попадает в `agrodron/.generated/.env`.
+- Конфигурация компонентов берётся из их `.env` в `agrodron/components/<component>/.env` при каждом `make prepare`; итог попадает в `agrodron/.generated/.env`.
 
 Если вы меняли только `.env` компонентов, достаточно снова выполнить:
 
@@ -210,3 +277,4 @@ make run-all
 make prepare
 make docker-up
 ```
+
