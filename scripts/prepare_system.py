@@ -37,9 +37,15 @@ def parse_env_file(path: Path) -> dict:
 
 
 def write_env_file(path: Path, env: dict):
+    """Write env dict to file. Values containing \" or newlines are quoted and escaped."""
     with open(path, "w") as f:
         for key, value in env.items():
-            f.write(f"{key}={value}\n")
+            s = str(value)
+            if '"' in s or "\n" in s or "\\" in s:
+                escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+                f.write(f'{key}="{escaped}"\n')
+            else:
+                f.write(f"{key}={s}\n")
 
 
 def rewrite_path(original: str, from_dir: Path, to_dir: Path) -> str:
@@ -81,9 +87,10 @@ def prepare_system(system_dir: str):
     system_compose = yaml.safe_load(system_compose_path.read_text())
 
     root_env = parse_env_file(root / "docker" / ".env")
+    system_env = parse_env_file(system_path / ".env")
 
-    # Discover components and their .env files (under system src/)
-    components_dir = system_path / "src"
+    # Discover components and their .env files (system components/ or src/)
+    components_dir = system_path / "components" if (system_path / "components").is_dir() else system_path / "src"
     component_envs = {}
     if components_dir.is_dir():
         for comp_dir in sorted(components_dir.iterdir()):
@@ -96,6 +103,7 @@ def prepare_system(system_dir: str):
 
     # --- Build merged .env ---
     merged_env = dict(root_env)
+    merged_env.update(system_env)
     suffixes = []
     for i, (comp_name, env) in enumerate(component_envs.items()):
         prefix = to_env_prefix(comp_name)
@@ -106,6 +114,46 @@ def prepare_system(system_dir: str):
         suffixes.append(suffix)
         merged_env[f"COMPONENT_USER_{suffix}"] = env.get("BROKER_USER", "")
         merged_env[f"COMPONENT_PASSWORD_{suffix}"] = env.get("BROKER_PASSWORD", "")
+
+    # SYSTEM_NAME, TOPIC_VERSION, INSTANCE_ID из системного .env
+    if "SYSTEM_NAME" not in merged_env:
+        merged_env["SYSTEM_NAME"] = "Agrodron"
+    if "TOPIC_VERSION" not in merged_env:
+        merged_env["TOPIC_VERSION"] = "v1"
+    if "INSTANCE_ID" not in merged_env:
+        merged_env["INSTANCE_ID"] = "Agrodron001"
+
+    # Подставляем SYSTEM_NAME в политики сразу, чтобы в .env не зависеть от порядка переменных при source
+    sys_name = merged_env.get("SYSTEM_NAME", "Agrodron")
+    topic_ver = merged_env.get("TOPIC_VERSION", "v1")
+    instance_id = merged_env.get("INSTANCE_ID", "Agrodron001")
+    topic_prefix = f"{topic_ver}.{sys_name}.{instance_id}"
+    ext_substitutions = {
+        "${SYSTEM_NAME}": topic_prefix,
+        "$${SYSTEM_NAME}": topic_prefix,
+        "$SYSTEM_NAME": topic_prefix,
+        "${ORVD_TOPIC}": merged_env.get("ORVD_TOPIC", ""),
+        "${NUS_TOPIC}": merged_env.get("NUS_TOPIC", ""),
+        "${DRONEPORT_TOPIC}": merged_env.get("DRONEPORT_TOPIC", ""),
+        "${SITL_TOPIC}": merged_env.get("SITL_TOPIC", ""),
+    }
+    for key in list(merged_env.keys()):
+        if "SECURITY_POLICIES" in key and isinstance(merged_env.get(key), str):
+            val = merged_env[key]
+            for placeholder, replacement in ext_substitutions.items():
+                val = val.replace(placeholder, replacement)
+            merged_env[key] = val
+
+    # Адреса брокера для хоста (интеграционные тесты подключаются с хоста к контейнеру)
+    if "MQTT_BROKER" not in merged_env:
+        merged_env["MQTT_BROKER"] = "localhost"
+    if "KAFKA_BOOTSTRAP_SERVERS" not in merged_env:
+        merged_env["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9092"
+    # Учётные данные для хоста: интеграционные тесты подключаются к MQTT как admin
+    if "BROKER_USER" not in merged_env:
+        merged_env["BROKER_USER"] = merged_env.get("ADMIN_USER", "admin")
+    if "BROKER_PASSWORD" not in merged_env:
+        merged_env["BROKER_PASSWORD"] = merged_env.get("ADMIN_PASSWORD", "")
 
     # --- Rewrite broker volume paths ---
     broker_dir = broker_compose_path.parent

@@ -7,6 +7,7 @@ import os
 from typing import Callable, Dict, Any, Optional
 from uuid import uuid4
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 try:
     import paho.mqtt.client as mqtt
@@ -226,7 +227,7 @@ class MQTTSystemBus(SystemBus):
         try:
             result = future.result(timeout=timeout)
             return result
-        except TimeoutError:
+        except (TimeoutError, FuturesTimeoutError):
             with self._pending_lock:
                 self._pending_requests.pop(correlation_id, None)
             print(f"Request to {topic} timed out after {timeout}s")

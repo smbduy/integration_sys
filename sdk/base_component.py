@@ -3,11 +3,14 @@
 
 Аналогичен BaseSystem, но без health check и run_forever.
 """
+import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Callable, Optional
 
 from broker.system_bus import SystemBus
 from sdk.messages import create_response
+
+logger = logging.getLogger(__name__)
 
 
 class BaseComponent(ABC):
@@ -60,6 +63,7 @@ class BaseComponent(ABC):
     def _handle_message(self, message: Dict[str, Any]):
         """Маршрутизация входящего сообщения по action."""
         action = message.get("action")
+        reply_to = message.get("reply_to")
         if not action:
             print(f"[{self.component_id}] Message without action: {message}")
             return
@@ -67,31 +71,38 @@ class BaseComponent(ABC):
         handler = self._handlers.get(action)
         if not handler:
             print(f"[{self.component_id}] Unknown action: {action}")
-            if message.get("reply_to"):
+            if reply_to:
                 self.bus.respond(message, {"error": f"Unknown action: {action}"}, action="error")
             return
 
+        if reply_to:
+            logger.info(
+                "[%s] request action=%s reply_to=%s",
+                self.component_id, action, reply_to,
+            )
         try:
             result = handler(message)
-            if message.get("reply_to") and result is not None:
+            if reply_to and result is not None:
                 response = create_response(
                     correlation_id=message.get("correlation_id"),
                     payload=result,
-                    sender=self.component_id,
+                    sender=self.topic,
                     success=True,
                 )
-                self.bus.publish(message["reply_to"], response)
+                self.bus.publish(reply_to, response)
+                logger.info("[%s] response sent to %s", self.component_id, reply_to)
         except Exception as e:
             print(f"[{self.component_id}] Error handling {action}: {e}")
-            if message.get("reply_to"):
+            if reply_to:
                 response = create_response(
                     correlation_id=message.get("correlation_id"),
                     payload={},
-                    sender=self.component_id,
+                    sender=self.topic,
                     success=False,
                     error=str(e),
                 )
-                self.bus.publish(message["reply_to"], response)
+                self.bus.publish(reply_to, response)
+                logger.info("[%s] error response sent to %s", self.component_id, reply_to)
 
     def _handle_ping(self, message: Dict[str, Any]) -> Dict[str, Any]:
         return {"pong": True, "component_id": self.component_id}

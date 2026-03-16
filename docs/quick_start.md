@@ -5,16 +5,17 @@
 ## Структура
 
 ```
-broker/              Шина, create_system_bus
-sdk/                 BaseComponent, BaseSystem
+broker/              SystemBus, MQTTSystemBus, KafkaSystemBus
+sdk/                 BaseComponent, topic_utils
 components/          Standalone-компоненты
-systems/             Системы (dummy_system)
+agrodron/            Система AgroDron (10 компонентов)
 docker/              Брокер (kafka, mosquitto)
 scripts/             prepare_system.py
 config/              Pipfile, pyproject.toml
+docs/                Документация (SYSTEM.md, EXTERNAL_API.md)
 ```
 
-## Команды
+## Команды (из корня репозитория)
 
 ```bash
 make init          # pipenv + зависимости
@@ -23,36 +24,36 @@ make docker-up     # Брокер (kafka/mqtt)
 make docker-down
 ```
 
-**Система:**
+## AgroDron
+
 ```bash
-cd systems/dummy_system
+cd agrodron
 make prepare       # Собрать .generated/
-make docker-up    # Брокер + компоненты
-make unit-test
-make integration-test
+make test          # Unit + integration тесты
+make docker-up     # Брокер + все компоненты
+make docker-ps     # Статус контейнеров
+make docker-logs   # Логи
+make docker-down   # Остановить
 ```
 
-## Протокол
+## Протокол сообщений
 
-Сообщения — dict: `action`, `payload`, `sender`, `correlation_id`, `reply_to`.
+Все сообщения — JSON с полями: `action`, `payload`, `sender`, `correlation_id`, `reply_to`.
 
-## Свой компонент/система
-
-- **Компонент:** `components/README.MD`
-- **Система:** `systems/README.md`
-- **Монитор безопасности:** `components/security_monitor/README.md` (Quick Start, policy actions, форматы policy)
+- **Топики**: `v1.{SystemName}.{InstanceID}.{component}` (например `v1.Agrodron.Agrodron001.autopilot`)
+- **sender**: полный топик отправителя (не короткое имя)
+- **action**: всегда lowercase (`get_state`, `set_target`, `log_event`)
 
 ## Правило доступа компонентов
 
-**Остальные компоненты (все кроме монитора) принимают запросы только от монитора.**  
-Входящие сообщения от любого другого sender должны игнорироваться (handler возвращает `None`). Монитор проксирует запросы от своего имени, поэтому целевой компонент видит `sender=security_monitor` и обрабатывает запрос.
+Все компоненты (кроме МБ) принимают запросы **только от монитора безопасности**. Сообщения от любого другого sender игнорируются. МБ проксирует запросы от своего топика, поэтому целевой компонент видит `sender = v1.Agrodron.Agrodron001.security_monitor`.
 
-Базовый поток:
+Поток:
 
-1. Клиент отправляет запрос в `components.security_monitor`
-2. Monitor проверяет policy
-3. Monitor проксирует запрос к целевому компоненту от своего sender
-4. Целевой компонент принимает сообщение только от monitor
+1. Клиент отправляет `proxy_request` / `proxy_publish` на топик security_monitor
+2. МБ проверяет политику `(sender, topic, action)`
+3. МБ проксирует сообщение к целевому компоненту от своего sender
+4. Целевой компонент проверяет sender и обрабатывает запрос
 
 ## Docker
 
@@ -63,12 +64,12 @@ make docker-up
 ```
 
 | Переменная | Описание |
-|------------|----------|
+|---|---|
 | BROKER_TYPE | kafka / mqtt |
 | ADMIN_USER, ADMIN_PASSWORD | Админ брокера |
-| COMPONENT_USER_A/B | Опционально, для компонентов |
+| TOPIC_VERSION, SYSTEM_NAME, INSTANCE_ID | Параметры формирования топиков |
 
-## Troubleshooting
+## Документация
 
-- Брокер недоступен: проверьте profile (kafka/mqtt) в docker-up
-- Внутри Docker: имена контейнеров (kafka, mosquitto), не localhost
+- [docs/SYSTEM.md](SYSTEM.md) — полная документация системы AgroDron
+- [docs/EXTERNAL_API.md](EXTERNAL_API.md) — API для внешних систем (НУС, ОРВД, Дронопорт, SITL)
