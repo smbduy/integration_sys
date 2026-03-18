@@ -135,4 +135,4 @@ def test_emit_sitl_publishes_to_security_monitor():
     assert len(bus.published) == 1
     _topic, message = bus.published[0]
     assert message.get("action") == "proxy_publish"
-    assert message.get("payload", {}).get("target", {}).get("action") == "command"
+    assert message.get("payload", {}).get("target", {}).get("action") == "__raw__"

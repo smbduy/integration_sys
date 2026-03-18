@@ -33,7 +33,6 @@ class MissionHandlerComponent(BaseComponent):
     ):
         self._last_mission: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
-        self._drone_registered_with_orvd: bool = False
 
         super().__init__(
             component_id=component_id,
@@ -102,17 +101,6 @@ class MissionHandlerComponent(BaseComponent):
             event="MISSION_HANDLER_MISSION_RECEIVED",
             details={"mission_id": mid},
         )
-
-        # ОрВД: регистрация дрона и миссии перед загрузкой в автопилот
-        if config.orvd_enabled() and config.orvd_topic():
-            ok_orvd, err_orvd = self._orvd_register_drone_and_mission(mission)
-            if not ok_orvd:
-                self._last_error = err_orvd or "orvd_rejected"
-                self._log_to_journal(
-                    event="MISSION_HANDLER_ORVD_ERROR",
-                    details={"error": self._last_error, "mission_id": mid},
-                )
-                return {"ok": False, "error": self._last_error}
 
         request_message: Dict[str, Any] = {
             "action": "proxy_request",
@@ -229,64 +217,6 @@ class MissionHandlerComponent(BaseComponent):
                     return False, f"missing_{field}_in_step_{idx}"
 
         return True, ""
-
-    # ------------------------------------------------------------ ORVD
-
-    def _orvd_proxy_request(self, action: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Запрос к ОрВД через монитор безопасности."""
-        topic = config.orvd_topic()
-        if not topic:
-            return None
-        message = {
-            "action": "proxy_request",
-            "sender": self.topic,
-            "payload": {"target": {"topic": topic, "action": action}, "data": payload},
-        }
-        response = self.bus.request(
-            config.security_monitor_topic(),
-            message,
-            timeout=config.mission_handler_request_timeout_s(),
-        )
-        if not isinstance(response, dict):
-            return None
-        return response.get("target_response") or response
-
-    def _orvd_register_drone_and_mission(self, mission: Dict[str, Any]) -> tuple[bool, Optional[str]]:
-        """Регистрирует дрон (если ещё не зарегистрирован) и миссию в ОрВД. Возвращает (ok, error)."""
-        drone_id = config.orvd_drone_id()
-
-        if not self._drone_registered_with_orvd:
-            resp = self._orvd_proxy_request(
-                "register_drone",
-                {"drone_id": drone_id, "model": "Agrodron", "operator": config.orvd_operator(), "additional_info": {}},
-            )
-            if not resp or resp.get("status") != "registered":
-                return False, resp.get("message") or "orvd_register_drone_failed"
-            self._drone_registered_with_orvd = True
-
-        steps = mission.get("steps") or []
-        route = [{"lat": float(s.get("lat", 0)), "lon": float(s.get("lon", 0))} for s in steps if isinstance(s, dict)]
-        velocity = 5.0
-        if steps and isinstance(steps[0], dict):
-            velocity = float(steps[0].get("speed_mps", 5.0))
-
-        resp = self._orvd_proxy_request(
-            "register_mission",
-            {
-                "mission_id": mission.get("mission_id"),
-                "drone_id": drone_id,
-                "route": route,
-                "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                "velocity": velocity,
-            },
-        )
-        if not resp:
-            return False, "orvd_register_mission_timeout"
-        if resp.get("status") == "mission_registered":
-            return True, None
-        if resp.get("status") == "rejected":
-            return False, resp.get("reason") or "orvd_rejected"
-        return False, resp.get("message") or "orvd_register_mission_failed"
 
     # ------------------------------------------------------------ SITL HOME
 

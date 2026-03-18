@@ -136,6 +136,8 @@ def prepare_system(system_dir: str):
         "${NUS_TOPIC}": merged_env.get("NUS_TOPIC", ""),
         "${DRONEPORT_TOPIC}": merged_env.get("DRONEPORT_TOPIC", ""),
         "${SITL_TOPIC}": merged_env.get("SITL_TOPIC", ""),
+        "${SITL_COMMANDS_TOPIC}": merged_env.get("SITL_COMMANDS_TOPIC", ""),
+        "${SITL_TELEMETRY_REQUEST_TOPIC}": merged_env.get("SITL_TELEMETRY_REQUEST_TOPIC", ""),
     }
     for key in list(merged_env.keys()):
         if "SECURITY_POLICIES" in key and isinstance(merged_env.get(key), str):

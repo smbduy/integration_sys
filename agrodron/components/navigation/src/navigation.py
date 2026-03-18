@@ -134,10 +134,11 @@ class NavigationComponent(BaseComponent):
             "sender": self.topic,
             "payload": {
                 "target": {
-                    "topic": config.sitl_topic(),
-                    "action": config.sitl_get_state_action(),
+                    "topic": config.sitl_telemetry_request_topic(),
+                    "action": "__raw__",
                 },
-                "data": {"drone_id": drone_id} if drone_id else {},
+                # SITL ожидает {"drone_id": ["drone_001"]} (список), без поля action.
+                "data": {"drone_id": [str(drone_id)]} if drone_id else {},
             },
         }
         response = self.bus.request(
@@ -150,12 +151,14 @@ class NavigationComponent(BaseComponent):
         target_response = response.get("target_response")
         if not isinstance(target_response, dict):
             return None
-        # SITL может вернуть { "payload": raw } или сразу raw
-        raw = target_response.get("payload")
+        # RAW-reply от SITL: обычно это {lat, lon, alt, ...} + correlation_id.
+        raw = target_response.get("payload") if isinstance(target_response.get("payload"), dict) else target_response
         if isinstance(raw, dict):
+            # убираем служебные поля request/response, если SITL их эхо-включает
+            raw = dict(raw)
+            raw.pop("reply_to", None)
+            raw.pop("correlation_id", None)
             return raw
-        if isinstance(target_response, dict) and "lat" in target_response:
-            return target_response
         return None
 
     def _poll_sitl_once(self) -> None:

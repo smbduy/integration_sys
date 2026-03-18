@@ -253,11 +253,15 @@ class SecurityMonitorComponent(BaseComponent):
             )
             return None
 
-        request_message = {
-            "action": target_action,
-            "sender": self.topic,
-            "payload": target_payload,
-        }
+        # RAW mode: target_action == "__raw__" means "send payload as-is" (SITL-style, no action/sender wrapper).
+        if target_action == "__raw__":
+            request_message = dict(target_payload) if isinstance(target_payload, dict) else {}
+        else:
+            request_message = {
+                "action": target_action,
+                "sender": self.topic,
+                "payload": target_payload,
+            }
         timeout_s = config.proxy_request_timeout_s()
         logger.info("[%s] proxy_request -> bus.request(%s, timeout=%.1fs)", self.component_id, target_topic, timeout_s)
         response = self.bus.request(
@@ -287,10 +291,13 @@ class SecurityMonitorComponent(BaseComponent):
         if not self._is_allowed(sender_id, target_topic, target_action):
             return None
 
-        publish_message = {
-            "action": target_action,
-            "sender": self.topic,
-            "payload": target_payload,
-        }
+        if target_action == "__raw__":
+            publish_message = dict(target_payload) if isinstance(target_payload, dict) else {}
+        else:
+            publish_message = {
+                "action": target_action,
+                "sender": self.topic,
+                "payload": target_payload,
+            }
         published = self.bus.publish(target_topic, publish_message)
         return {"published": bool(published)}

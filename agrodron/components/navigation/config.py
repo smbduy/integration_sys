@@ -22,9 +22,9 @@ def sitl_topic() -> str:
     return (os.environ.get("SITL_TOPIC") or "").strip()
 
 
-def sitl_get_state_action() -> str:
-    """Action для запроса состояния у SITL (get_state → JSON)."""
-    return (os.environ.get("SITL_GET_STATE_ACTION") or "get_state").strip()
+def sitl_telemetry_request_topic() -> str:
+    """Топик SITL для запроса телеметрии/навигации (SITL без action)."""
+    return (os.environ.get("SITL_TELEMETRY_REQUEST_TOPIC") or sitl_topic()).strip()
 
 
 def sitl_drone_id() -> str:

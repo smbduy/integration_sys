@@ -20,6 +20,11 @@ def sitl_topic() -> str:
     return (os.environ.get("SITL_TOPIC") or "").strip()
 
 
+def sitl_commands_topic() -> str:
+    """Топик SITL для команд приводов (SITL без action)."""
+    return (os.environ.get("SITL_COMMANDS_TOPIC") or sitl_topic()).strip()
+
+
 def sitl_drone_id() -> str:
     return (os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
 

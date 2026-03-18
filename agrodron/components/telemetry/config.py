@@ -28,11 +28,6 @@ def navigation_topic() -> str:
     return (os.environ.get("NAVIGATION_TOPIC") or topic_for("navigation")).strip()
 
 
-def autopilot_topic() -> str:
-    """Топик автопилота (для EMERGENCY_STOP при emergency от ОрВД)."""
-    return (os.environ.get("AUTOPILOT_TOPIC") or topic_for("autopilot")).strip()
-
-
 def motors_get_state_action() -> str:
     return (os.environ.get("MOTORS_GET_STATE_ACTION") or "get_state").strip()
 
@@ -58,25 +53,3 @@ def telemetry_poll_interval_s() -> float:
 
 def telemetry_request_timeout_s() -> float:
     return _get_float("TELEMETRY_REQUEST_TIMEOUT_S", 2.0, min_value=0.1)
-
-
-# --- ОрВД ---
-
-def orvd_topic() -> str:
-    """Топик API ОрВД. Пусто — телеметрия в ОрВД не отправляется."""
-    return (os.environ.get("ORVD_TOPIC") or os.environ.get("ORVD_EXTERNAL_TOPIC") or "").strip()
-
-
-def orvd_enabled() -> bool:
-    """Включена ли отправка телеметрии в ОрВД."""
-    v = os.environ.get("ORVD_ENABLED", "false").strip().lower()
-    return v in ("1", "true", "yes")
-
-
-def orvd_drone_id() -> str:
-    return (os.environ.get("ORVD_DRONE_ID") or os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
-
-
-def orvd_send_interval_s() -> float:
-    """Период отправки телеметрии в ОрВД (сек)."""
-    return _get_float("ORVD_TELEMETRY_SEND_INTERVAL_S", 1.0, min_value=0.2)

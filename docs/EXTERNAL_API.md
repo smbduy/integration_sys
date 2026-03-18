@@ -133,16 +133,18 @@
 
 ### Действия Дрон -> ОРВД
 
-#### request_departure
+#### request_takeoff
 
-Запрос разрешения на вылет.
+Запрос разрешения на взлёт.
 
 ```json
 {
-  "action": "request_departure",
+  "action": "request_takeoff",
   "sender": "v1.Agrodron.Agrodron001.security_monitor",
   "payload": {
-    "mission_id": "mission-001"
+    "drone_id": "Agrodron001",
+    "mission_id": "mission-001",
+    "time": "2026-03-18T12:00:00Z"
   }
 }
 ```
@@ -150,13 +152,13 @@
 Ожидаемый ответ:
 
 ```json
-{ "approved": true }
+{ "status": "takeoff_authorized" }
 ```
 
 или
 
 ```json
-{ "approved": false, "reason": "airspace_restricted" }
+{ "status": "rejected", "reason": "airspace_restricted" }
 ```
 
 ### Действия ОРВД -> Дрон
@@ -230,28 +232,28 @@
 
 ## SITL (Симулятор / Цифровой двойник)
 
-**Топик**: `v1.SITL.SITL001.main` (переменная `SITL_TOPIC`)
+SITL использует **RAW-протокол**: сообщения **без** поля `action` и без обёртки `{action, sender, payload}`.
+
+Reply/response делается через `reply_to` + `correlation_id`, которые добавляет клиент (в нашем случае — `SystemBus.request()` внутри security_monitor).
+
+### Топики
+
+- **Команды приводов**: `sitl.commands` (переменная `SITL_COMMANDS_TOPIC`)
+- **Запрос навигации/телеметрии**: `sitl.telemetry.request` (переменная `SITL_TELEMETRY_REQUEST_TOPIC`)
 
 ### Действия Дрон -> SITL
 
-#### command
+#### Команды приводов (motors -> SITL)
 
-Отправка команды управления (от компонента motors).
+Отправка команды управления (от компонента motors). RAW JSON по схеме SITL.
 
 ```json
 {
-  "action": "command",
-  "sender": "v1.Agrodron.Agrodron001.security_monitor",
-  "payload": {
-    "source": "motors",
-    "command": {
-      "drone_id": "drone_001",
-      "vx": 1.5,
-      "vy": 0.0,
-      "vz": 0.0,
-      "mag_heading": 90.0
-    }
-  }
+  "drone_id": "drone_001",
+  "vx": 1.5,
+  "vy": 0.0,
+  "vz": 0.0,
+  "mag_heading": 90.0
 }
 ```
 
@@ -277,33 +279,26 @@
 
 ### Действия SITL -> Дрон
 
-#### get_nav_state
+#### Ответ на запрос телеметрии/навигации (SITL -> reply_to)
 
-Запрос навигационных данных (от компонента navigation).
+SITL отвечает в `reply_to` и повторяет `correlation_id` из запроса.
 
 ```json
 {
-  "action": "get_nav_state",
-  "sender": "v1.Agrodron.Agrodron001.security_monitor",
-  "payload": {
-    "drone_id": "drone_001"
-  }
+  "correlation_id": "e2e4f10a-3a7d-4bdb-9b2f-4a3ad4a02d2c",
+  "lat": 59.938623,
+  "lon": 30.316534,
+  "alt": 100.2
 }
 ```
 
-Ожидаемый ответ:
+#### Запрос навигации/телеметрии (navigation -> SITL)
+
+RAW request в `SITL_TELEMETRY_REQUEST_TOPIC`:
 
 ```json
 {
-  "payload": {
-    "lat": 60.0,
-    "lon": 30.0,
-    "alt_m": 5.0,
-    "heading_deg": 90.0,
-    "gps_valid": true,
-    "speed_mps": 1.5,
-    "satellites_used": 10
-  }
+  "drone_id": ["drone_001"]
 }
 ```
 
@@ -314,7 +309,7 @@
 ```
 НУС -> mission_handler : load_mission (WPL)
 НУС -> autopilot       : cmd START
-  autopilot -> ОРВД    : request_departure
+  autopilot -> ОРВД    : request_takeoff
   autopilot -> Дронопорт: request_departure
   [при отказе] autopilot -> НУС: mission_rejected
   [при успехе] autopilot выполняет миссию

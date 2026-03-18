@@ -165,20 +165,15 @@ class MotorsComponent(BaseComponent):
         Топик и брокер задаются в ENV (SITL_COMMANDS_TOPIC, брокер системы).
         """
         sitl_msg = self._build_sitl_command(command)
-        payload = {
-            "source": "motors",
-            "command": sitl_msg,
-            "raw_target": command,
-        }
         message = {
             "action": "proxy_publish",
             "sender": self.topic,
             "payload": {
                 "target": {
-                    "topic": config.sitl_topic(),
-                    "action": "command",
+                    "topic": config.sitl_commands_topic(),
+                    "action": "__raw__",
                 },
-                "data": payload,
+                "data": sitl_msg,
             },
         }
         self.bus.publish(config.security_monitor_topic(), message)

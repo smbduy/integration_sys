@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 
-from sdk.topic_utils import topic_for, system_name
+from sdk.topic_utils import instance_id, topic_for, system_name
 
 
 def component_topic() -> str:
@@ -49,8 +49,8 @@ def orvd_topic() -> str:
 
 
 def orvd_drone_id() -> str:
-    """Идентификатор дрона для ОрВД."""
-    return (os.environ.get("ORVD_DRONE_ID") or os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
+    """Идентификатор дрона для ОрВД = INSTANCE_ID системы."""
+    return instance_id()
 
 
 def nus_topic() -> str:
