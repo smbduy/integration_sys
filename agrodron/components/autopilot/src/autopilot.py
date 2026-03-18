@@ -439,11 +439,17 @@ class AutopilotComponent(BaseComponent):
         topic = config.orvd_topic()
         if not topic:
             return True
-        resp = self._proxy_request_external(topic, "request_departure", {"mission_id": mission_id})
-        if resp and resp.get("approved"):
-            self._log_to_journal("ORVD_DEPARTURE_APPROVED", {"mission_id": mission_id})
+        from datetime import datetime, timezone
+        payload = {
+            "drone_id": config.orvd_drone_id(),
+            "mission_id": mission_id,
+            "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        resp = self._proxy_request_external(topic, "request_takeoff", payload)
+        if resp and resp.get("status") == "takeoff_authorized":
+            self._log_to_journal("ORVD_TAKEOFF_APPROVED", {"mission_id": mission_id})
             return True
-        self._log_to_journal("ORVD_DEPARTURE_DENIED", {"mission_id": mission_id, "response": resp})
+        self._log_to_journal("ORVD_TAKEOFF_DENIED", {"mission_id": mission_id, "response": resp})
         return False
 
     def _request_departure_droneport(self, mission_id: str) -> bool:

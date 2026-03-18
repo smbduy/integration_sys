@@ -44,7 +44,13 @@ def navigation_get_state_action() -> str:
 
 
 def orvd_topic() -> str:
-    return (os.environ.get("ORVD_TOPIC") or "").strip()
+    """Топик API ОрВД. Пусто = не обращаться к ОрВД."""
+    return (os.environ.get("ORVD_TOPIC") or os.environ.get("ORVD_EXTERNAL_TOPIC") or "").strip()
+
+
+def orvd_drone_id() -> str:
+    """Идентификатор дрона для ОрВД."""
+    return (os.environ.get("ORVD_DRONE_ID") or os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
 
 
 def nus_topic() -> str:

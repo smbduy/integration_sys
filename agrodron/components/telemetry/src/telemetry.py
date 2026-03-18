@@ -29,6 +29,7 @@ class TelemetryComponent(BaseComponent):
         self._last_sprayer: Optional[Dict[str, Any]] = None
         self._last_navigation: Optional[Dict[str, Any]] = None
         self._last_poll_ts: float = 0.0
+        self._last_orvd_send_ts: float = 0.0
 
         self._poll_thread: Optional[threading.Thread] = None
         self._poll_interval_s: float = config.telemetry_poll_interval_s()
@@ -90,6 +91,9 @@ class TelemetryComponent(BaseComponent):
                 self._last_navigation = navigation_state
             self._last_poll_ts = time.time()
 
+        # Отправка телеметрии в ОрВД (если включено) и обработка emergency (LAND → EMERGENCY_STOP)
+        self._send_orvd_telemetry_if_due()
+
     def _proxy_get_state(self, target_topic: str, target_action: str) -> Optional[Dict[str, Any]]:
         message = {
             "action": "proxy_request",
@@ -111,4 +115,62 @@ class TelemetryComponent(BaseComponent):
             return None
         payload = target_response.get("payload")
         return payload if isinstance(payload, dict) else None
+
+    def _send_orvd_telemetry_if_due(self) -> None:
+        """Отправляет телеметрию в ОрВД (если включено) и обрабатывает emergency (LAND)."""
+        if not config.orvd_enabled() or not config.orvd_topic():
+            return
+        now = time.time()
+        if (now - self._last_orvd_send_ts) < config.orvd_send_interval_s():
+            return
+        self._last_orvd_send_ts = now
+
+        with self._lock:
+            nav = dict(self._last_navigation) if isinstance(self._last_navigation, dict) else {}
+        lat = nav.get("lat")
+        lon = nav.get("lon")
+        alt = nav.get("alt_m", nav.get("altitude_msl", 0))
+        speed = nav.get("ground_speed_mps", nav.get("speed", 0))
+        if lat is None or lon is None:
+            return
+
+        message = {
+            "action": "proxy_request",
+            "sender": self.topic,
+            "payload": {
+                "target": {"topic": config.orvd_topic(), "action": "send_telemetry"},
+                "data": {
+                    "drone_id": config.orvd_drone_id(),
+                    "coords": {"lat": float(lat), "lon": float(lon)},
+                    "altitude": float(alt),
+                    "speed": float(speed),
+                },
+            },
+        }
+        try:
+            response = self.bus.request(
+                config.security_monitor_topic(),
+                message,
+                timeout=self._request_timeout_s,
+            )
+        except Exception:
+            return
+        if not isinstance(response, dict):
+            return
+        resp = response.get("target_response") or response
+        if isinstance(resp, dict) and resp.get("status") == "emergency" and resp.get("command") == "LAND":
+            self._send_emergency_stop_to_autopilot()
+        return None
+
+    def _send_emergency_stop_to_autopilot(self) -> None:
+        """Отправляет EMERGENCY_STOP автопилоту через МБ."""
+        msg = {
+            "action": "proxy_publish",
+            "sender": self.topic,
+            "payload": {
+                "target": {"topic": config.autopilot_topic(), "action": "cmd"},
+                "data": {"command": "EMERGENCY_STOP"},
+            },
+        }
+        self.bus.publish(config.security_monitor_topic(), msg)
 
