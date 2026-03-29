@@ -220,7 +220,7 @@ limiter периодически опрашивает navigation и telemetry. �
 |---|---|
 | `get_state` | Агрегат состояния motors + sprayer + navigation |
 
-telemetry периодически опрашивает motors, sprayer и navigation, кэширует результаты и отдаёт по запросу.
+telemetry периодически опрашивает **motors**, **sprayer** и **navigation** (через МБ `proxy_request` к каждому `get_state`), кэширует результаты в `_last_motors` / `_last_sprayer` / `_last_navigation` и отдаёт снимок по запросу `get_state`. Внешние системы (НУС, ОРВД) могут запрашивать тот же `get_state` на топике telemetry при наличии политики.
 
 ### 4.9. journal
 
@@ -271,8 +271,8 @@ Payload:
 
 Разрешённые обращения к компонентам дрона через `proxy_request` на монитор (в поле `sender` у запроса — топик внешней системы), например:
 
-- `(NUS_TOPIC, …mission_handler, load_mission)`, `(NUS_TOPIC, …mission_handler, validate_only)`, `(NUS_TOPIC, …autopilot, cmd)`
-- `(ORVD_TOPIC, …mission_handler, load_mission)`, `(ORVD_TOPIC, …mission_handler, validate_only)`
+- `(NUS_TOPIC, …mission_handler, load_mission)`, `(NUS_TOPIC, …mission_handler, validate_only)`, `(NUS_TOPIC, …autopilot, cmd)`, `(NUS_TOPIC, …telemetry, get_state)`
+- `(ORVD_TOPIC, …mission_handler, load_mission)`, `(ORVD_TOPIC, …mission_handler, validate_only)`, `(ORVD_TOPIC, …telemetry, get_state)`, `(ORVD_TOPIC, …autopilot, cmd)`
 
 Полный актуальный список — в `SECURITY_POLICIES` после `make prepare` смотрите в `agrodron/.generated/.env` (переменная `SECURITY_MONITOR_SECURITY_POLICIES`).
 

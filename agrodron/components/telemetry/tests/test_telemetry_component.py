@@ -58,11 +58,13 @@ def test_get_state_returns_snapshot_for_trusted():
     comp = _make_component()
     comp._last_motors = {"mode": "IDLE", "temperature_c": 50.0}
     comp._last_sprayer = {"state": "OFF"}
+    comp._last_navigation = {"lat": 60.0, "lon": 30.0}
     msg = {"action": "get_state", "sender": SM_TOPIC, "payload": {}}
     result = comp._handle_get_state(msg)
     assert result is not None
     assert result["motors"]["mode"] == "IDLE"
     assert result["sprayer"]["state"] == "OFF"
+    assert result["navigation"]["lon"] == 30.0
     assert "last_poll_ts" in result
 
 
@@ -73,6 +75,7 @@ def test_get_state_empty_before_poll():
     assert result is not None
     assert result["motors"] is None
     assert result["sprayer"] is None
+    assert result["navigation"] is None
 
 
 def test_proxy_get_state_returns_payload_from_response():
@@ -82,6 +85,16 @@ def test_proxy_get_state_returns_payload_from_response():
     }
     out = comp._proxy_get_state("agrodron.motors", "get_state")
     assert out == {"mode": "TRACKING"}
+
+
+def test_proxy_get_state_accepts_flat_component_dict():
+    """motors/sprayer возвращают плоский dict без ключа payload."""
+    comp = _make_component()
+    comp.bus._request_response = {
+        "target_response": {"mode": "IDLE", "temperature_c": 40.0},
+    }
+    out = comp._proxy_get_state("agrodron.motors", "get_state")
+    assert out == {"mode": "IDLE", "temperature_c": 40.0}
 
 
 def test_proxy_get_state_returns_none_on_bad_response():

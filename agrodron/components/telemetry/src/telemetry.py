@@ -109,5 +109,8 @@ class TelemetryComponent(BaseComponent):
         target_response = response.get("target_response")
         if not isinstance(target_response, dict):
             return None
-        payload = target_response.get("payload")
-        return payload if isinstance(payload, dict) else None
+        # navigation кладёт снимок в payload; motors/sprayer отдают плоский dict
+        inner = target_response.get("payload")
+        if isinstance(inner, dict):
+            return inner
+        return target_response

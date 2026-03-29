@@ -49,6 +49,11 @@
 - `(NUS_TOPIC, v1.Agrodron.Agrodron001.mission_handler, load_mission)`
 - `(NUS_TOPIC, v1.Agrodron.Agrodron001.mission_handler, validate_only)`
 - `(NUS_TOPIC, v1.Agrodron.Agrodron001.autopilot, cmd)`
+- `(NUS_TOPIC, v1.Agrodron.Agrodron001.telemetry, get_state)` — агрегат телеметрии (в т.ч. навигация)
+
+#### get_state (telemetry)
+
+Снимок с борта: motors, sprayer, **navigation** (последние закэшированные `get_state` с компонентов). Запрос — `proxy_request` на монитор, цель `…telemetry`, `action` `get_state`, `data`: `{}`.
 
 #### load_mission
 
@@ -182,6 +187,13 @@
 ### Действия ОРВД → дрон
 
 ОРВД может загружать миссии напрямую (аналогично НУС): через **`proxy_request`** на монитор с `sender` = `ORVD_TOPIC` и целью `mission_handler` (`load_mission` / `validate_only`). Политика должна разрешать соответствующие тройки.
+
+#### telemetry (get_state) и команды автопилота (cmd)
+
+Политики также могут разрешать:
+
+- `(ORVD_TOPIC, …telemetry, get_state)` — агрегированная телеметрия (motors, sprayer, **navigation**);
+- `(ORVD_TOPIC, …autopilot, cmd)` — команды автопилота (`START`, `PAUSE`, `ABORT`, …), по тому же принципу, что и для НУС.
 
 ---
 
