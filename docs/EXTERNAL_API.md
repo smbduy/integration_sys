@@ -1,9 +1,26 @@
 # API внешних систем
 
-Формат топиков: `v1.{SystemName}.{InstanceID}.{component}`
+## Топики и формат
 
-Все сообщения передаются через брокер (MQTT/Kafka) в JSON-формате.
-Структура сообщения:
+**Компоненты дрона** используют схему `v1.{SystemName}.{InstanceID}.{component}` (например `v1.Agrodron.Agrodron001.mission_handler`). Задаётся через `TOPIC_VERSION`, `SYSTEM_NAME`, `INSTANCE_ID`.
+
+**Внешние системы** подключаются **не** по этой схеме: их адреса в брокере — произвольные строки из `agrodron/.env`. В репозитории заданы такие значения по умолчанию:
+
+| Переменная | Пример значения в `agrodron/.env` |
+|------------|-----------------------------------|
+| `NUS_TOPIC` | `v1.gcs.1.drone_manager` |
+| `ORVD_TOPIC` | `v1.ORVD.ORVD001.main` |
+| `DRONEPORT_TOPIC` | `v1.drone_port.1.drone_manager` |
+| `SITL_TOPIC` | `v1.SITL.SITL001.main` |
+
+**Низкоуровневые каналы SITL** (без обёртки `action` в теле сообщения) задаются отдельно:
+
+| Переменная | Пример |
+|------------|--------|
+| `SITL_COMMANDS_TOPIC` | `sitl.commands` |
+| `SITL_TELEMETRY_REQUEST_TOPIC` | `sitl.telemetry.request` |
+
+Все JSON-сообщения с полем `action` используют структуру:
 
 ```json
 {
@@ -13,73 +30,71 @@
 }
 ```
 
-Поле `sender` всегда содержит полный топик отправителя (например, `v1.NUS.NUS001.main` или `v1.Agrodron.Agrodron001.security_monitor`). Все сообщения от дрона к внешним системам проходят через монитор безопасности, поэтому sender будет равен топику security_monitor.
+### Доступ внешних систем к компонентам дрона
+
+Компоненты принимают сообщения **только** от монитора безопасности (`sender` = топик `…security_monitor`). Поэтому НУС и ОРВД не публикуют в топик `mission_handler` напрямую: они отправляют **`proxy_request`** (или при необходимости `proxy_publish`) **на топик монитора** `v1.Agrodron.Agrodron001.security_monitor`. В поле `sender` у этого запроса указывается **топик внешней системы** (например `v1.gcs.1.drone_manager`). Монитор проверяет политику `(sender, topic_цели, action)` и проксирует к компоненту.
+
+Исходящие сообщения дрона к внешним системам тоже идут **через монитор** (`proxy_request` / `proxy_publish` с `sender` = топик компонента-инициатора, например автопилота); до внешнего потребителя сообщение доходит с `sender` = топик монитора безопасности.
 
 ---
 
 ## НУС (Наземная Управляющая Система)
 
-**Топик**: `v1.NUS.NUS001.main` (переменная `NUS_TOPIC`)
+**Топик**: значение `NUS_TOPIC` (в репозитории: `v1.gcs.1.drone_manager`).
 
-### Действия НУС -> Дрон
+### Действия НУС → дрон
+
+Запросы выполняются через **proxy_request** на топик `v1.Agrodron.Agrodron001.security_monitor`. В политиках должны быть разрешены, например:
+
+- `(NUS_TOPIC, v1.Agrodron.Agrodron001.mission_handler, load_mission)`
+- `(NUS_TOPIC, v1.Agrodron.Agrodron001.mission_handler, validate_only)`
+- `(NUS_TOPIC, v1.Agrodron.Agrodron001.autopilot, cmd)`
 
 #### load_mission
 
-Загрузка миссии в mission_handler. Формат — WPL (QGC WPL 110).
+Загрузка миссии в mission_handler. Формат данных — WPL (QGC WPL 110).
 
-Топик назначения: `v1.Agrodron.Agrodron001.mission_handler`
+Пример сообщения **на монитор безопасности** (внешний клиент подставляет свой `NUS_TOPIC`):
 
 ```json
 {
-  "action": "load_mission",
-  "sender": "v1.NUS.NUS001.main",
+  "action": "proxy_request",
+  "sender": "v1.gcs.1.drone_manager",
   "payload": {
-    "wpl_content": "QGC WPL 110\n0\t1\t0\t16\t0\t0\t0\t0\t60.0\t30.0\t5.0\t1",
-    "mission_id": "mission-001"
+    "target": {
+      "topic": "v1.Agrodron.Agrodron001.mission_handler",
+      "action": "load_mission"
+    },
+    "data": {
+      "wpl_content": "QGC WPL 110\n0\t1\t0\t16\t0\t0\t0\t0\t60.0\t30.0\t5.0\t1",
+      "mission_id": "mission-001"
+    }
   }
 }
 ```
 
-Ответ:
-
-```json
-{ "ok": true }
-```
-
-или
-
-```json
-{ "ok": false, "error": "wpl_parse_failed" }
-```
+Ответ приходит в обёртке `target_response` от монитора; у mission_handler: `{ "ok": true }` или `{ "ok": false, "error": "wpl_parse_failed" }` (и другие коды ошибок).
 
 #### validate_only
 
-Проверка миссии без загрузки.
-
-Топик назначения: `v1.Agrodron.Agrodron001.mission_handler`
-
-```json
-{
-  "action": "validate_only",
-  "sender": "v1.NUS.NUS001.main",
-  "payload": {
-    "wpl_content": "QGC WPL 110\n..."
-  }
-}
-```
+Проверка миссии без загрузки — тот же `proxy_request`, `action` цели `validate_only`, в `data` — `wpl_content`.
 
 #### cmd (start)
 
-Команда запуска выполнения загруженной миссии.
-
-Топик назначения: `v1.Agrodron.Agrodron001.autopilot`
+Команда запуска выполнения загруженной миссии — цель `autopilot`, действие `cmd`:
 
 ```json
 {
-  "action": "cmd",
-  "sender": "v1.NUS.NUS001.main",
+  "action": "proxy_request",
+  "sender": "v1.gcs.1.drone_manager",
   "payload": {
-    "command": "START"
+    "target": {
+      "topic": "v1.Agrodron.Agrodron001.autopilot",
+      "action": "cmd"
+    },
+    "data": {
+      "command": "START"
+    }
   }
 }
 ```
@@ -102,13 +117,13 @@
 { "ok": false, "error": "droneport_departure_denied" }
 ```
 
-### Действия Дрон -> НУС
+### Действия дрон → НУС
 
 #### mission_status
 
-Уведомление о статусе миссии.
+Уведомление о статусе миссии. Публикуется в сторону топика **`NUS_TOPIC`** через монитор; у внешнего потребителя в сообщении `sender` будет топик монитора безопасности.
 
-Топик назначения: `v1.NUS.NUS001.main`
+Топик назначения: `NUS_TOPIC` (пример: `v1.gcs.1.drone_manager`).
 
 ```json
 {
@@ -121,21 +136,22 @@
 }
 ```
 
-Возможные события:
-- `mission_completed` — миссия завершена
-- `mission_rejected` — миссия невозможна (ОРВД или Дронопорт отказали)
+Возможные события в `payload` (поле `event` и сопутствующие поля):
+
+- `mission_completed` — миссия завершена (`mission_id` и др.)
+- `mission_rejected` — отказ до старта (например `reason`: `orvd_denied`, `droneport_denied`, плюс `mission_id`)
 
 ---
 
 ## ОРВД (Организация Воздушного Движения)
 
-**Топик**: `v1.ORVD.ORVD001.main` (переменная `ORVD_TOPIC`)
+**Топик**: `ORVD_TOPIC` (в репозитории: `v1.ORVD.ORVD001.main`).
 
-### Действия Дрон -> ОРВД
+### Действия дрон → ОРВД
+
+Автопилот вызывает внешний топик через `proxy_request` на мониторе; пример тела для стороны ОРВД:
 
 #### request_takeoff
-
-Запрос разрешения на взлёт.
 
 ```json
 {
@@ -149,6 +165,8 @@
 }
 ```
 
+`drone_id` в коде берётся из `INSTANCE_ID` системы (см. `agrodron/.env`).
+
 Ожидаемый ответ:
 
 ```json
@@ -161,23 +179,19 @@
 { "status": "rejected", "reason": "airspace_restricted" }
 ```
 
-### Действия ОРВД -> Дрон
+### Действия ОРВД → дрон
 
-#### load_mission / validate_only
-
-ОРВД может также загружать миссии напрямую (топик `v1.Agrodron.Agrodron001.mission_handler`), аналогично НУС.
+ОРВД может загружать миссии напрямую (аналогично НУС): через **`proxy_request`** на монитор с `sender` = `ORVD_TOPIC` и целью `mission_handler` (`load_mission` / `validate_only`). Политика должна разрешать соответствующие тройки.
 
 ---
 
 ## Дронопорт
 
-**Топик**: `v1.Droneport.DP001.main` (переменная `DRONEPORT_TOPIC`)
+**Топик**: `DRONEPORT_TOPIC` (в репозитории: `v1.drone_port.1.drone_manager`).
 
-### Действия Дрон -> Дронопорт
+### Действия дрон → Дронопорт
 
 #### request_departure
-
-Запрос разрешения на вылет с площадки.
 
 ```json
 {
@@ -197,8 +211,6 @@
 
 #### request_landing
 
-Запрос разрешения на посадку.
-
 ```json
 {
   "action": "request_landing",
@@ -215,8 +227,6 @@
 
 #### request_maintenance
 
-Запрос обслуживания после посадки.
-
 ```json
 {
   "action": "request_maintenance",
@@ -232,20 +242,26 @@
 
 ## SITL (Симулятор / Цифровой двойник)
 
-SITL использует **RAW-протокол**: сообщения **без** поля `action` и без обёртки `{action, sender, payload}`.
+### Логический топик адаптера
 
-Reply/response делается через `reply_to` + `correlation_id`, которые добавляет клиент (в нашем случае — `SystemBus.request()` внутри security_monitor).
+**`SITL_TOPIC`** — точка для сообщений с полями `action` / `sender` / `payload` (например `set_home` из mission_handler). В репозитории: `v1.SITL.SITL001.main`.
+
+### RAW-протокол
+
+Каналы **`SITL_COMMANDS_TOPIC`** и **`SITL_TELEMETRY_REQUEST_TOPIC`** используют **RAW**-режим: тело сообщения **без** обёртки `{action, sender, payload}`.
+
+Reply/response делается через `reply_to` + `correlation_id`, которые добавляет клиент (в т.ч. `SystemBus.request()` внутри security_monitor).
 
 ### Топики
 
-- **Команды приводов**: `sitl.commands` (переменная `SITL_COMMANDS_TOPIC`)
-- **Запрос навигации/телеметрии**: `sitl.telemetry.request` (переменная `SITL_TELEMETRY_REQUEST_TOPIC`)
+- **Команды приводов**: `sitl.commands` (`SITL_COMMANDS_TOPIC`)
+- **Запрос навигации/телеметрии**: `sitl.telemetry.request` (`SITL_TELEMETRY_REQUEST_TOPIC`)
 
-### Действия Дрон -> SITL
+### Действия дрон → SITL
 
-#### Команды приводов (motors -> SITL)
+#### Команды приводов (motors → SITL)
 
-Отправка команды управления (от компонента motors). RAW JSON по схеме SITL.
+От компонента motors через монитор с действием цели `__raw__`. Пример полезной нагрузки:
 
 ```json
 {
@@ -259,7 +275,7 @@ Reply/response делается через `reply_to` + `correlation_id`, кот
 
 #### set_home
 
-Установка домашней точки (от mission_handler при загрузке миссии).
+Установка домашней точки (mission_handler при загрузке миссии). Целевой топик — **`SITL_TOPIC`**, действие `set_home` (после проксирования МБ `sender` у приёмника — топик монитора):
 
 ```json
 {
@@ -277,9 +293,9 @@ Reply/response делается через `reply_to` + `correlation_id`, кот
 }
 ```
 
-### Действия SITL -> Дрон
+### Действия SITL → дрон
 
-#### Ответ на запрос телеметрии/навигации (SITL -> reply_to)
+#### Ответ на запрос телеметрии/навигации (SITL → reply_to)
 
 SITL отвечает в `reply_to` и повторяет `correlation_id` из запроса.
 
@@ -292,7 +308,7 @@ SITL отвечает в `reply_to` и повторяет `correlation_id` из 
 }
 ```
 
-#### Запрос навигации/телеметрии (navigation -> SITL)
+#### Запрос навигации/телеметрии (navigation → SITL)
 
 RAW request в `SITL_TELEMETRY_REQUEST_TOPIC`:
 
@@ -307,16 +323,18 @@ RAW request в `SITL_TELEMETRY_REQUEST_TOPIC`:
 ## Последовательность выполнения миссии
 
 ```
-НУС -> mission_handler : load_mission (WPL)
-НУС -> autopilot       : cmd START
-  autopilot -> ОРВД    : request_takeoff
-  autopilot -> Дронопорт: request_departure
-  [при отказе] autopilot -> НУС: mission_rejected
+НУС -> security_monitor : proxy_request -> mission_handler : load_mission (WPL)
+НУС -> security_monitor : proxy_request -> autopilot : cmd START
+  autopilot -> ОРВД      : request_takeoff
+  autopilot -> Дронопорт : request_departure
+  [при отказе] autopilot -> НУС : mission_status (mission_rejected)
   [при успехе] autopilot выполняет миссию
   [по завершении]
     autopilot -> Дронопорт: request_landing
     autopilot -> motors: land (посадка)
     autopilot: self_diagnostics()
     autopilot -> Дронопорт: request_maintenance
-    autopilot -> НУС: mission_completed
+    autopilot -> НУС: mission_status (mission_completed)
 ```
+
+(Топики НУС / ОРВД / Дронопорта подставляются из `NUS_TOPIC`, `ORVD_TOPIC`, `DRONEPORT_TOPIC`.)

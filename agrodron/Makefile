@@ -1,4 +1,4 @@
-.PHONY: help prepare unit-test integration-test test docker-up docker-down docker-logs docker-logs-% docker-ps status
+.PHONY: help prepare unit-test integration-test test docker-up docker-up-components docker-down docker-logs docker-logs-% docker-ps status
 
 # Все команды pipenv/pytest выполняются из корня репозитория (cd ..)
 PIPENV       = PIPENV_PIPFILE=config/Pipfile pipenv
@@ -6,6 +6,9 @@ PYTEST       = $(PIPENV) run pytest -c config/pyproject.toml
 GENERATED    = .generated
 COMPOSE      = docker compose -f $(GENERATED)/docker-compose.yml --env-file $(GENERATED)/.env
 BROKER       = $${BROKER_TYPE:-mqtt}
+
+# Только сервисы AgroDron (без kafka/mosquitto). Брокер должен быть уже запущен и доступен по MQTT_BROKER.
+COMPONENT_SERVICES = security_monitor journal navigation autopilot limiter emergensy mission_handler motors sprayer telemetry
 
 help:
 	@echo ""
@@ -18,7 +21,8 @@ help:
 	@echo "    make test                Все тесты (unit + integration)"
 	@echo ""
 	@echo "  Docker"
-	@echo "    make docker-up           Поднять систему (prepare + docker compose up)"
+	@echo "    make docker-up           Поднять систему (prepare + брокер + компоненты)"
+	@echo "    make docker-up-components Только контейнеры компонентов (брокер уже снаружи; см. MQTT_BROKER)"
 	@echo "    make docker-down         Остановить и удалить контейнеры"
 	@echo "    make docker-ps           Статус контейнеров"
 	@echo "    make docker-logs         Логи всех контейнеров (follow)"
@@ -63,6 +67,13 @@ docker-up: prepare
 	@echo ""
 	@echo "Система запущена. Проверьте статус: make docker-ps"
 	@echo "Логи:                          make docker-logs"
+
+docker-up-components: prepare
+	@echo "Запуск только компонентов AgroDron (без kafka/mosquitto). Брокер должен быть в той же Docker-сети; MQTT_BROKER по умолчанию — hostname mosquitto."
+	@set -a && . $(GENERATED)/.env && set +a && \
+		$(COMPOSE) --profile $(BROKER) up -d --build --no-deps $(COMPONENT_SERVICES)
+	@echo ""
+	@echo "Компоненты запущены. Статус: make docker-ps"
 
 docker-down:
 	-@$(COMPOSE) --profile mqtt  down --remove-orphans 2>/dev/null

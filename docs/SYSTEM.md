@@ -47,12 +47,16 @@ v1.{SystemName}.{InstanceID}.{component}
 
 ### Внешние системы
 
-| Система | Топик (по умолчанию) | Переменная |
+Имена топиков задаются в `agrodron/.env` и **не обязаны** следовать схеме `v1.{SystemName}.{InstanceID}.{component}`.
+
+| Система | Пример в репозитории (`agrodron/.env`) | Переменная |
 |---|---|---|
-| НУС (наземная управляющая) | `v1.NUS.NUS001.main` | `NUS_TOPIC` |
+| НУС (наземная управляющая) | `v1.gcs.1.drone_manager` | `NUS_TOPIC` |
 | ОРВД (воздушное движение) | `v1.ORVD.ORVD001.main` | `ORVD_TOPIC` |
-| Дронопорт | `v1.Droneport.DP001.main` | `DRONEPORT_TOPIC` |
-| SITL (симулятор) | `v1.SITL.SITL001.main` | `SITL_TOPIC` |
+| Дронопорт | `v1.drone_port.1.drone_manager` | `DRONEPORT_TOPIC` |
+| SITL (адаптер с `action`/`payload`) | `v1.SITL.SITL001.main` | `SITL_TOPIC` |
+| SITL RAW (команды приводов) | `sitl.commands` | `SITL_COMMANDS_TOPIC` |
+| SITL RAW (запрос телеметрии) | `sitl.telemetry.request` | `SITL_TELEMETRY_REQUEST_TOPIC` |
 
 ---
 
@@ -128,15 +132,17 @@ v1.{SystemName}.{InstanceID}.{component}
 | Action | Описание |
 |---|---|
 | `mission_load` | Загрузить миссию (от mission_handler) |
-| `cmd` | Команда управления: `START`, `PAUSE`, `RESUME`, `ABORT` |
+| `cmd` | Команда управления: `START`, `PAUSE`, `RESUME`, `ABORT`, `RESET`, `EMERGENCY_STOP`, `KOVER` |
 | `get_state` | Текущее состояние автопилота |
 
 `cmd` с `command: "START"` запускает последовательность:
-1. Запрос `request_departure` к ОРВД
+1. Запрос `request_takeoff` к ОРВД (разрешение на взлёт)
 2. Запрос `request_departure` к Дронопорту
 3. При отказе — уведомление `mission_rejected` в НУС
 4. При успехе — выполнение миссии
 5. По завершении — `request_landing`, самодиагностика, `request_maintenance`, уведомление `mission_completed` в НУС
+
+Дополнительные команды `cmd`: `PAUSE`, `RESUME`, `ABORT`, `RESET`, `EMERGENCY_STOP`, `KOVER` (посадка «ковром» до земли, затем ожидание).
 
 ### 4.2. mission_handler
 
@@ -165,7 +171,7 @@ Payload `load_mission`:
 | `nav_state` | Обновить навигационное состояние |
 | `update_config` | Обновить конфигурацию (drone_id и т.п.) |
 
-navigation периодически опрашивает SITL через `get_nav_state` и хранит актуальное состояние.
+navigation периодически запрашивает SITL через `proxy_request` на топик `SITL_TELEMETRY_REQUEST_TOPIC` с действием `__raw__` (сырой JSON `{"drone_id": ["…"]}` без поля `action` в теле SITL), нормализует ответ в NAV_STATE и хранит актуальное состояние.
 
 ### 4.4. motors
 
@@ -175,7 +181,7 @@ navigation периодически опрашивает SITL через `get_na
 | `land` | Аварийная посадка |
 | `get_state` | Текущее состояние приводов (mode, last_target, temperature) |
 
-При получении `set_target` или `land` motors отправляет команду `command` в SITL.
+При получении `set_target` или `land` motors публикует в SITL через `proxy_publish` на `SITL_COMMANDS_TOPIC` с действием `__raw__` (JSON с полями `drone_id`, `vx`, `vy`, `vz`, `mag_heading`).
 
 ### 4.5. sprayer
 
@@ -203,10 +209,10 @@ limiter периодически опрашивает navigation и telemetry. �
 | `get_state` | Текущее состояние (active) |
 
 При получении `limiter_event` emergensy запускает аварийный протокол:
-1. `isolation_start` в security_monitor (переключение на аварийные политики)
-2. `set_spray: false` в sprayer (закрытие распыления)
-3. `land` в motors (посадка)
-4. `log_event` в journal (логирование)
+1. Публикация `isolation_start` **на топик** security_monitor (не через `proxy_publish`; проверка отправителя внутри МБ)
+2. `proxy_publish` → sprayer `set_spray` (выкл.)
+3. `proxy_publish` → motors `land`
+4. `proxy_publish` → journal `log_event`
 
 ### 4.8. telemetry
 
@@ -237,23 +243,42 @@ Payload:
 
 ## 5. Политики безопасности
 
-Политики задаются JSON-массивом в переменной `SECURITY_POLICIES`. Каждая запись — тройка `(sender, topic, action)`, где sender и topic — **полные топики**.
+Политики задаются JSON-массивом в переменной `SECURITY_POLICIES` (файл `agrodron/components/security_monitor/.env`). Каждая запись — тройка `(sender, topic, action)`, где `sender` и `topic` — **полные строки топиков** в брокере.
 
-В `.env` используются подстановки: `${SYSTEM_NAME}` раскрывается в `v1.{SystemName}.{InstanceID}`, а `${NUS_TOPIC}`, `${ORVD_TOPIC}` и т.д. — в соответствующие топики внешних систем.
+В `.env` используются подстановки (их раскрывает `scripts/prepare_system.py` при `make prepare`):
 
-Пример записи:
+| Плейсхолдер | Становится |
+|-------------|------------|
+| `${SYSTEM_NAME}` | `v1.{SystemName}.{InstanceID}` (префикс топиков компонентов) |
+| `${NUS_TOPIC}`, `${ORVD_TOPIC}`, `${DRONEPORT_TOPIC}`, `${SITL_TOPIC}` | значения из смерженного `.env` |
+| `${SITL_COMMANDS_TOPIC}`, `${SITL_TELEMETRY_REQUEST_TOPIC}` | RAW-топики SITL |
+
+Пример внутренней политики:
 
 ```json
 {"sender": "${SYSTEM_NAME}.autopilot", "topic": "${SYSTEM_NAME}.navigation", "action": "get_state"}
 ```
 
-Раскрывается в:
+После раскрытия:
 
 ```json
 {"sender": "v1.Agrodron.Agrodron001.autopilot", "topic": "v1.Agrodron.Agrodron001.navigation", "action": "get_state"}
 ```
 
-При активации изоляции (`isolation_start`) политики заменяются на аварийный набор, разрешающий только emergensy.
+**Важно:** `mission_handler` отправляет `set_home` на топик **`${SITL_TOPIC}`** (см. `SITL_TOPIC` в `agrodron/.env`), а не на вымышленный `…sitl` внутри префикса дрона. В политике должна быть тройка `(топик mission_handler, значение SITL_TOPIC, set_home)`.
+
+### Вход снаружи (НУС, ОРВД)
+
+Разрешённые обращения к компонентам дрона через `proxy_request` на монитор (в поле `sender` у запроса — топик внешней системы), например:
+
+- `(NUS_TOPIC, …mission_handler, load_mission)`, `(NUS_TOPIC, …mission_handler, validate_only)`, `(NUS_TOPIC, …autopilot, cmd)`
+- `(ORVD_TOPIC, …mission_handler, load_mission)`, `(ORVD_TOPIC, …mission_handler, validate_only)`
+
+Полный актуальный список — в `SECURITY_POLICIES` после `make prepare` смотрите в `agrodron/.generated/.env` (переменная `SECURITY_MONITOR_SECURITY_POLICIES`).
+
+### Изоляция
+
+Команда `isolation_start` обрабатывается монитором по **прямому** сообщению на его топик (инициатор — `emergensy`); таблица политик для `proxy_*` на это не распространяется. После срабатывания политики заменяются аварийным набором в коде МБ.
 
 ---
 
@@ -267,9 +292,12 @@ SYSTEM_NAME=Agrodron
 INSTANCE_ID=Agrodron001
 
 ORVD_TOPIC=v1.ORVD.ORVD001.main
-NUS_TOPIC=v1.NUS.NUS001.main
-DRONEPORT_TOPIC=v1.Droneport.DP001.main
+NUS_TOPIC=v1.gcs.1.drone_manager
+DRONEPORT_TOPIC=v1.drone_port.1.drone_manager
 SITL_TOPIC=v1.SITL.SITL001.main
+
+SITL_COMMANDS_TOPIC=sitl.commands
+SITL_TELEMETRY_REQUEST_TOPIC=sitl.telemetry.request
 ```
 
 ### Компонентные `.env`
@@ -334,10 +362,10 @@ make status              # prepare + test + docker-up + docker-ps
 НУС -> security_monitor : proxy_request -> mission_handler : load_mission (WPL)
   mission_handler -> autopilot : mission_load
   mission_handler -> limiter   : mission_load
-  mission_handler -> SITL      : set_home
+  mission_handler -> SITL_TOPIC (`set_home`, см. `SITL_TOPIC` в `.env`)
 
 НУС -> security_monitor : proxy_request -> autopilot : cmd START
-  autopilot -> ОРВД      : request_departure
+  autopilot -> ОРВД      : request_takeoff
   autopilot -> Дронопорт : request_departure
   [при отказе]
     autopilot -> НУС : mission_status (mission_rejected)
@@ -356,10 +384,8 @@ make status              # prepare + test + docker-up + docker-ps
 ```
 limiter обнаруживает отклонение от маршрута
   limiter -> emergensy : limiter_event
-    emergensy -> security_monitor : isolation_start
-    emergensy -> sprayer : set_spray (off)
-    emergensy -> motors  : land
-    emergensy -> journal : log_event
+    emergensy -> security_monitor (топик МБ): isolation_start
+    emergensy -> security_monitor : proxy_publish -> sprayer / motors / journal
 ```
 
 ---

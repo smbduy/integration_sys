@@ -1,28 +1,36 @@
 # Quick Start
 
-Брокер (Kafka/MQTT) + SDK. Шаблоны: `components/dummy_component`, `systems/dummy_system`.
+Брокер (Kafka/MQTT), SDK и система **AgroDron** в каталоге `agrodron/`. Сборка Docker для системы выполняется через `scripts/prepare_system.py` (см. `make prepare` в `agrodron/`).
 
 ## Структура
 
 ```
+agrodron/            Система AgroDron: docker-compose компонентов, Makefile, tests/
+  components/        Компоненты (autopilot, mission_handler, security_monitor, …)
+  tests/integration/ Интеграционные тесты (in-process)
 broker/              SystemBus, MQTTSystemBus, KafkaSystemBus
 sdk/                 BaseComponent, topic_utils
-components/          Standalone-компоненты
-agrodron/            Система AgroDron (10 компонентов)
-docker/              Брокер (kafka, mosquitto)
-scripts/             prepare_system.py
-config/              Pipfile, pyproject.toml
-docs/                Документация (SYSTEM.md, EXTERNAL_API.md)
+docker/              Инфраструктура брокера (Kafka, Mosquitto), example.env
+scripts/             prepare_system.py — слияние compose и .env
+config/              Pipfile, pyproject.toml (pytest)
+docs/                SYSTEM.md, EXTERNAL_API.md, quick_start.md
 ```
 
-## Команды (из корня репозитория)
+## Окружение и тесты (из корня репозитория)
+
+Зависимости задаются в `config/Pipfile`:
 
 ```bash
-make init          # pipenv + зависимости
-make unit-test     # Unit тесты
-make docker-up     # Брокер (kafka/mqtt)
-make docker-down
+PIPENV_PIPFILE=config/Pipfile pipenv install
+cd agrodron && make unit-test          # только unit
+cd agrodron && make test               # unit + integration
 ```
+
+Только брокер (без контейнеров AgroDron): скопируйте `docker/example.env` в `docker/.env`, затем поднимите compose из `docker/` (см. [docker/README.md](../docker/README.md)).
+
+## Команды Makefile
+
+Корневого `Makefile` нет: все цели `make` описаны в `agrodron/Makefile`.
 
 ## AgroDron
 
@@ -55,19 +63,17 @@ make docker-down   # Остановить
 3. МБ проксирует сообщение к целевому компоненту от своего sender
 4. Целевой компонент проверяет sender и обрабатывает запрос
 
-## Docker
+## Docker (полная система AgroDron)
 
 ```bash
-cp docker/example.env docker/.env
-# BROKER_TYPE=kafka или mqtt
-make docker-up
+cp docker/example.env docker/.env   # при необходимости скорректируйте BROKER_TYPE и пароли
+cd agrodron
+make prepare          # agrodron/.generated/docker-compose.yml и .env
+make docker-up        # брокер + все компоненты (профиль из BROKER_TYPE в смерженном .env)
+make docker-down
 ```
 
-| Переменная | Описание |
-|---|---|
-| BROKER_TYPE | kafka / mqtt |
-| ADMIN_USER, ADMIN_PASSWORD | Админ брокера |
-| TOPIC_VERSION, SYSTEM_NAME, INSTANCE_ID | Параметры формирования топиков |
+Переменные `BROKER_TYPE`, `ADMIN_USER`, `ADMIN_PASSWORD` задаются в `docker/.env` и `agrodron/.env` (итог — в `agrodron/.generated/.env`). Топики: `TOPIC_VERSION`, `SYSTEM_NAME`, `INSTANCE_ID`.
 
 ## Документация
 
