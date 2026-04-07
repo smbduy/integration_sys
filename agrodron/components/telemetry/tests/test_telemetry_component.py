@@ -47,11 +47,12 @@ def _make_component() -> TelemetryComponent:
     return TelemetryComponent(component_id="telemetry_test", bus=bus)
 
 
-def test_get_state_returns_none_for_untrusted():
+def test_get_state_trust_error_for_untrusted():
     comp = _make_component()
     msg = {"action": "get_state", "sender": "unknown", "payload": {}}
     result = comp._handle_get_state(msg)
-    assert result is None
+    assert result.get("telemetry_trust_error") is True
+    assert result.get("sender_received") == "unknown"
 
 
 def test_get_state_returns_snapshot_for_trusted():

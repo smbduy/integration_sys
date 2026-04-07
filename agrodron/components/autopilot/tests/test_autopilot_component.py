@@ -13,13 +13,58 @@ def _make_component() -> AutopilotComponent:
 
 
 def test_mission_load_and_start():
-    saved = {k: os.environ.pop(k, None) for k in ("ORVD_TOPIC", "DRONEPORT_TOPIC")}
+    saved = {k: os.environ.pop(k, None) for k in (
+        "ORVD_TOPIC",
+        "DRONEPORT_TOPIC",
+        "AUTOPILOT_ORVD_MOCK_SUCCESS",
+        "AUTOPILOT_DRONEPORT_MOCK_SUCCESS",
+    )}
     try:
         _run_mission_load_and_start()
     finally:
         for k, v in saved.items():
             if v is not None:
                 os.environ[k] = v
+
+
+def test_start_with_orvd_topic_uses_mock_without_real_orvd():
+    """При ORVD_TOPIC и AUTOPILOT_ORVD_MOCK_SUCCESS запрос к ОРВД по шине не нужен."""
+    saved = {k: os.environ.pop(k, None) for k in (
+        "ORVD_TOPIC",
+        "DRONEPORT_TOPIC",
+        "AUTOPILOT_ORVD_MOCK_SUCCESS",
+        "AUTOPILOT_DRONEPORT_MOCK_SUCCESS",
+    )}
+    try:
+        os.environ["ORVD_TOPIC"] = "v1.ORVD.ORVD001.main"
+        os.environ["AUTOPILOT_ORVD_MOCK_SUCCESS"] = "1"
+        _run_mission_load_and_start()
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+
+
+def test_start_with_droneport_topic_uses_mock_without_real_droneport():
+    """При DRONEPORT_TOPIC и AUTOPILOT_DRONEPORT_MOCK_SUCCESS запросы к Дронопорту по шине не нужны."""
+    saved = {k: os.environ.pop(k, None) for k in (
+        "ORVD_TOPIC",
+        "DRONEPORT_TOPIC",
+        "AUTOPILOT_ORVD_MOCK_SUCCESS",
+        "AUTOPILOT_DRONEPORT_MOCK_SUCCESS",
+    )}
+    try:
+        os.environ["DRONEPORT_TOPIC"] = "v1.drone_port.1.drone_manager"
+        os.environ["AUTOPILOT_DRONEPORT_MOCK_SUCCESS"] = "1"
+        _run_mission_load_and_start()
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
 
 
 def _run_mission_load_and_start():

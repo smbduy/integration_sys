@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 from broker.system_bus import SystemBus
 from sdk.base_component import BaseComponent
+from sdk.journal_log import publish_journal_event
 
 from components.sprayer import config
 
@@ -90,11 +91,23 @@ class SprayerComponent(BaseComponent):
 
     def _emit_sitl_command(self, command: Dict[str, Any]) -> None:
         mode = config.sitl_mode()
+        sitl_topic = config.sitl_topic()
+        publish_journal_event(
+            self.bus,
+            self.topic,
+            "SPRAYER_SITL_OUT",
+            source="sprayer",
+            details={
+                "sitl_mode": mode,
+                "sitl_topic": sitl_topic or "",
+                "command": command,
+            },
+        )
         if mode == "mock":
-            self.bus.publish(config.sitl_topic(), {"source": "sprayer", "command": command})
+            self.bus.publish(sitl_topic, {"source": "sprayer", "command": command})
         else:
             self.bus.publish(
-                config.sitl_topic(),
+                sitl_topic,
                 {
                     "source": "sprayer",
                     "command": command,

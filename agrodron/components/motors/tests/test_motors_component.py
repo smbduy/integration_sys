@@ -132,7 +132,11 @@ def test_emit_sitl_publishes_to_security_monitor():
     bus = comp.bus
     assert isinstance(bus, DummyBus)
     comp._emit_sitl_command({"vx": 0.0, "vy": 0.0, "vz": 0.0})
-    assert len(bus.published) == 1
+    # 1) команда SITL __raw__; 2) запись в журнал (веб-монитор)
+    assert len(bus.published) == 2
     _topic, message = bus.published[0]
     assert message.get("action") == "proxy_publish"
     assert message.get("payload", {}).get("target", {}).get("action") == "__raw__"
+    _jt, jmsg = bus.published[1]
+    assert jmsg.get("action") == "proxy_publish"
+    assert jmsg.get("payload", {}).get("target", {}).get("action") == "log_event"

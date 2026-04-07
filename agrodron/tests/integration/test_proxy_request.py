@@ -70,4 +70,6 @@ def test_proxy_request_denied_by_policy():
     }
 
     result = sm._handle_proxy_request(msg)
-    assert result is None
+    assert isinstance(result, dict)
+    assert result.get("ok") is False
+    assert result.get("error") == "policy_denied"

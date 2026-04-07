@@ -122,6 +122,27 @@ class BaseComponent(ABC):
         self.bus.subscribe(self.topic, self._handle_message)
         self._running = True
         print(f"[{self.component_id}] Started. Listening on topic: {self.topic}")
+        self._log_component_started()
+
+    def _log_component_started(self) -> None:
+        """Запись в журнал при старте (через МБ; у journal — локальная запись, см. JournalComponent)."""
+        if self.component_type == "journal":
+            return
+        try:
+            from sdk.journal_log import publish_journal_event
+
+            publish_journal_event(
+                self.bus,
+                self.topic,
+                "COMPONENT_STARTED",
+                source=self.component_type,
+                details={
+                    "component_id": self.component_id,
+                    "topic": self.topic,
+                },
+            )
+        except Exception as exc:
+            logger.debug("[%s] journal startup log skipped: %s", self.component_id, exc)
 
     def stop(self):
         """Отписывается и останавливает шину."""

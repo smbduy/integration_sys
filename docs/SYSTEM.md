@@ -137,10 +137,10 @@ v1.{SystemName}.{InstanceID}.{component}
 
 `cmd` с `command: "START"` запускает последовательность:
 1. Запрос `request_takeoff` к ОРВД (разрешение на взлёт)
-2. Запрос `request_departure` к Дронопорту
+2. Запрос `request_takeoff` к Дронопорту (drone_manager DronePort — выезд с порта)
 3. При отказе — уведомление `mission_rejected` в НУС
 4. При успехе — выполнение миссии
-5. По завершении — `request_landing`, самодиагностика, `request_maintenance`, уведомление `mission_completed` в НУС
+5. По завершении — `request_landing` (с `drone_id` и `model`), самодиагностика, `request_charging`, уведомление `mission_completed` в НУС
 
 Дополнительные команды `cmd`: `PAUSE`, `RESUME`, `ABORT`, `RESET`, `EMERGENCY_STOP`, `KOVER` (посадка «ковром» до земли, затем ожидание).
 
@@ -280,6 +280,20 @@ Payload:
 
 Команда `isolation_start` обрабатывается монитором по **прямому** сообщению на его топик (инициатор — `emergensy`); таблица политик для `proxy_*` на это не распространяется. После срабатывания политики заменяются аварийным набором в коде МБ.
 
+### MQTT: пул потоков для входящих сообщений (`MQTT_BUS_CALLBACK_WORKERS`)
+
+При работе через **MQTT** (`BROKER_TYPE=mqtt`) класс `MQTTSystemBus` (`broker/mqtt/mqtt_system_bus.py`) передаёт входящие сообщения на подписанные топики (в том числе на топик МБ) в пул потоков `ThreadPoolExecutor`. Обработчик `proxy_request` на стороне МБ **блокирует** поток на всё время вложенного `bus.request` к целевому компоненту — до **`SECURITY_MONITOR_PROXY_REQUEST_TIMEOUT_S`** секунд на один такой вызов.
+
+Если **потоков мало**, новые запросы к МБ стоят в **очереди** исполнителя, пока занятые потоки ждут ответов по цепочке proxy. Типичный симптом: **первый** запрос успевает, при росте параллельной нагрузки (telemetry, limiter, `system_monitor` и др.) — периодические **таймауты** у клиентов; у **system_monitor** на дашборде это выглядит как ошибка опроса при **сохранённом** последнем успешном снимке.
+
+| | |
+|---|---|
+| **Переменная** | `MQTT_BUS_CALLBACK_WORKERS` — число потоков пула (в коде нижняя граница 4). |
+| **По умолчанию** | 32 — задано в реализации шины и в общем фрагменте `x-common-env` в `agrodron/docker-compose.yml`. |
+| **Где задать** | `agrodron/.env`, после `make prepare` — в `agrodron/.generated/.env`, либо переопределение только для нужных сервисов в compose. |
+
+Увеличение значения снижает риск очередей при многих одновременных `proxy_request`; при необходимости дополнительно поднимайте внешние таймауты клиентов (например `SYSTEM_MONITOR_TELEMETRY_TIMEOUT_S` у system_monitor), но сначала имеет смысл проверить этот параметр.
+
 ---
 
 ## 6. Конфигурация
@@ -298,6 +312,9 @@ SITL_TOPIC=v1.SITL.SITL001.main
 
 SITL_COMMANDS_TOPIC=sitl.commands
 SITL_TELEMETRY_REQUEST_TOPIC=sitl.telemetry.request
+
+# Только для MQTT: размер пула обработки входящих сообщений (см. раздел «MQTT: пул потоков…» выше).
+# MQTT_BUS_CALLBACK_WORKERS=32
 ```
 
 ### Компонентные `.env`
@@ -366,7 +383,7 @@ make status              # prepare + test + docker-up + docker-ps
 
 НУС -> security_monitor : proxy_request -> autopilot : cmd START
   autopilot -> ОРВД      : request_takeoff
-  autopilot -> Дронопорт : request_departure
+  autopilot -> Дронопорт : request_takeoff
   [при отказе]
     autopilot -> НУС : mission_status (mission_rejected)
   [при успехе]
@@ -375,7 +392,7 @@ make status              # prepare + test + docker-up + docker-ps
     autopilot -> Дронопорт : request_landing
     autopilot -> motors    : land
     autopilot : self_diagnostics()
-    autopilot -> Дронопорт : request_maintenance
+    autopilot -> Дронопорт : request_charging
     autopilot -> НУС       : mission_status (mission_completed)
 ```
 

@@ -1,5 +1,5 @@
 import os
-import tempfile
+from pathlib import Path
 
 from components.bus_mock import MockSystemBus
 from components.journal import config
@@ -13,6 +13,16 @@ def _make_component(tmp_path: str) -> JournalComponent:
     bus = MockSystemBus()
     return JournalComponent(
         component_id="journal_test",
+        bus=bus,
+        topic=config.component_topic(),
+    )
+
+
+def _make_component_auto_log_dir(tmp_path: Path) -> JournalComponent:
+    """Без JOURNAL_FILE_PATH: новый файл в JOURNAL_LOG_DIR."""
+    bus = MockSystemBus()
+    return JournalComponent(
+        component_id="journal_auto",
         bus=bus,
         topic=config.component_topic(),
     )
@@ -42,4 +52,24 @@ def test_log_event_writes_to_file(tmp_path: str):
 
     assert len(lines) == 1
     assert "TEST_EVENT" in lines[0]
+
+
+def test_new_file_per_run_in_log_dir(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("JOURNAL_FILE_PATH", raising=False)
+    monkeypatch.setenv("JOURNAL_LOG_DIR", str(tmp_path))
+    comp = _make_component_auto_log_dir(tmp_path)
+    journal_file = comp._journal_file_path
+    assert journal_file.startswith(str(tmp_path))
+    assert Path(journal_file).name.startswith("system_")
+    assert journal_file.endswith(".ndjson")
+
+    msg = {
+        "action": "log_event",
+        "sender": SM_TOPIC,
+        "payload": {"event": "AUTO_DIR_EVENT", "source": "test"},
+    }
+    assert comp._handle_log_event(msg) == {"ok": True}
+
+    with open(journal_file, "r", encoding="utf-8") as f:
+        assert "AUTO_DIR_EVENT" in f.read()
 

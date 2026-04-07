@@ -4,6 +4,8 @@ import time
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.proxy_reply import unwrap_proxy_target_response
+
 from components.limiter import config
 
 
@@ -146,9 +148,7 @@ class LimiterComponent(BaseComponent):
             message,
             timeout=self._request_timeout_s,
         )
-        if not isinstance(response, dict):
-            return
-        target_response = response.get("target_response")
+        target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return
         nav_payload = target_response.get("payload")
@@ -177,9 +177,7 @@ class LimiterComponent(BaseComponent):
             message,
             timeout=self._request_timeout_s,
         )
-        if not isinstance(response, dict):
-            return
-        target_response = response.get("target_response")
+        target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return
         telem_payload = target_response.get("payload")

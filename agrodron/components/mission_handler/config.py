@@ -32,6 +32,11 @@ def sitl_drone_id() -> str:
     return (os.environ.get("SITL_DRONE_ID") or "drone_001").strip()
 
 
+def sitl_verifier_home_topic() -> str:
+    """Топик входа verifier SITL (схема sitl-drone-home.json). Должен совпадать с HOME_TOPIC в SITL-модуле."""
+    return (os.environ.get("SITL_VERIFIER_HOME_TOPIC") or "sitl-drone-home").strip()
+
+
 def _get_float(name: str, default: float, *, min_value: Optional[float] = None) -> float:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":

@@ -4,6 +4,8 @@ import threading
 import time
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.proxy_reply import unwrap_proxy_target_response
+
 from components.autopilot import config
 
 
@@ -113,10 +115,10 @@ class AutopilotComponent(BaseComponent):
                 self._notify_nus("mission_rejected", {"reason": "orvd_denied", "mission_id": mission_id})
                 return {"ok": False, "error": "orvd_departure_denied"}
 
-            dp_ok = self._request_departure_droneport(mission_id)
+            dp_ok = self._request_takeoff_droneport(mission_id)
             if not dp_ok:
                 self._notify_nus("mission_rejected", {"reason": "droneport_denied", "mission_id": mission_id})
-                return {"ok": False, "error": "droneport_departure_denied"}
+                return {"ok": False, "error": "droneport_takeoff_denied"}
 
             self._state = "EXECUTING"
         elif command == "PAUSE":
@@ -199,10 +201,7 @@ class AutopilotComponent(BaseComponent):
             message,
             timeout=self._request_timeout_s,
         )
-        if not isinstance(response, dict):
-            return
-
-        target_response = response.get("target_response")
+        target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return
 
@@ -439,6 +438,12 @@ class AutopilotComponent(BaseComponent):
         topic = config.orvd_topic()
         if not topic:
             return True
+        if config.orvd_mock_success():
+            self._log_to_journal(
+                "ORVD_TAKEOFF_APPROVED",
+                {"mission_id": mission_id, "stub": True, "reason": "AUTOPILOT_ORVD_MOCK_SUCCESS"},
+            )
+            return True
         from datetime import datetime, timezone
         payload = {
             "drone_id": config.orvd_drone_id(),
@@ -452,23 +457,101 @@ class AutopilotComponent(BaseComponent):
         self._log_to_journal("ORVD_TAKEOFF_DENIED", {"mission_id": mission_id, "response": resp})
         return False
 
-    def _request_departure_droneport(self, mission_id: str) -> bool:
+    def _droneport_battery_pct(self, *, default: float) -> float:
+        """Процент заряда из последней навигации или default."""
+        nav = self._last_nav_state or {}
+        for key in ("battery_pct", "battery", "bat_pct"):
+            if key in nav:
+                try:
+                    return float(nav[key])
+                except (TypeError, ValueError):
+                    break
+        return default
+
+    @staticmethod
+    def _unwrap_droneport_response(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Снимает обёртки proxy_request (в т.ч. вложенный target_response/payload)."""
+        cur: Any = raw
+        for _ in range(6):
+            if not isinstance(cur, dict):
+                return None
+            if cur.get("error") is not None or "port_id" in cur:
+                return cur
+            pl = cur.get("payload")
+            if isinstance(pl, dict) and (pl.get("error") is not None or "port_id" in pl):
+                return pl
+            nxt = unwrap_proxy_target_response(cur)
+            if isinstance(nxt, dict) and nxt is not cur:
+                cur = nxt
+                continue
+            nxt2 = cur.get("target_response")
+            if isinstance(nxt2, dict):
+                cur = nxt2
+                continue
+            if isinstance(pl, dict):
+                tr = pl.get("target_response")
+                if isinstance(tr, dict):
+                    cur = tr
+                    continue
+            break
+        return cur if isinstance(cur, dict) else None
+
+    def _droneport_takeoff_ok(self, resp: Optional[Dict[str, Any]]) -> bool:
+        """Ответ DronePort `request_takeoff`: успех без `error`, с данными о порте/батарее."""
+        body = self._unwrap_droneport_response(resp)
+        if not isinstance(body, dict) or body.get("error"):
+            return False
+        return "port_id" in body or "battery" in body
+
+    def _droneport_landing_ok(self, resp: Optional[Dict[str, Any]]) -> bool:
+        """Ответ DronePort `request_landing`: назначен порт."""
+        body = self._unwrap_droneport_response(resp)
+        if not isinstance(body, dict) or body.get("error"):
+            return False
+        return bool(body.get("port_id"))
+
+    def _request_takeoff_droneport(self, mission_id: str) -> bool:
+        """Соответствует DronePort `request_takeoff` (выезд с порта / взлёт)."""
         topic = config.droneport_topic()
         if not topic:
             return True
-        resp = self._proxy_request_external(topic, "request_departure", {"mission_id": mission_id})
-        if resp and resp.get("approved"):
-            self._log_to_journal("DRONEPORT_DEPARTURE_APPROVED", {"mission_id": mission_id})
+        if config.droneport_mock_success():
+            self._log_to_journal(
+                "DRONEPORT_TAKEOFF_APPROVED",
+                {"mission_id": mission_id, "stub": True, "reason": "AUTOPILOT_DRONEPORT_MOCK_SUCCESS"},
+            )
             return True
-        self._log_to_journal("DRONEPORT_DEPARTURE_DENIED", {"mission_id": mission_id, "response": resp})
+        resp = self._proxy_request_external(
+            topic,
+            "request_takeoff",
+            {
+                "drone_id": config.orvd_drone_id(),
+                "battery": self._droneport_battery_pct(
+                    default=config.droneport_takeoff_battery_default(),
+                ),
+            },
+        )
+        if self._droneport_takeoff_ok(resp):
+            self._log_to_journal("DRONEPORT_TAKEOFF_APPROVED", {"mission_id": mission_id})
+            return True
+        self._log_to_journal("DRONEPORT_TAKEOFF_DENIED", {"mission_id": mission_id, "response": resp})
         return False
 
     def _request_landing_droneport(self) -> bool:
         topic = config.droneport_topic()
         if not topic:
             return True
-        resp = self._proxy_request_external(topic, "request_landing", {})
-        return bool(resp and resp.get("approved"))
+        if config.droneport_mock_success():
+            return True
+        resp = self._proxy_request_external(
+            topic,
+            "request_landing",
+            {
+                "drone_id": config.orvd_drone_id(),
+                "model": config.droneport_drone_model(),
+            },
+        )
+        return self._droneport_landing_ok(resp)
 
     def _notify_nus(self, event: str, details: Dict[str, Any]) -> None:
         topic = config.nus_topic()
@@ -494,8 +577,8 @@ class AutopilotComponent(BaseComponent):
             drop=False,
         )
 
-        diag_ok = self._self_diagnostics()
-        self._request_maintenance_droneport(diag_ok)
+        self._self_diagnostics()
+        self._request_charging_droneport()
 
         mid = self._mission.get("mission_id") if self._mission else None
         self._notify_nus("mission_completed", {"mission_id": mid})
@@ -504,18 +587,22 @@ class AutopilotComponent(BaseComponent):
         """Заглушка самодиагностики. TODO: реализовать реальные проверки."""
         return True
 
-    def _request_maintenance_droneport(self, diagnostics_ok: bool) -> None:
+    def _request_charging_droneport(self) -> None:
+        """Соответствует DronePort `request_charging` (запрос зарядки на порту)."""
         topic = config.droneport_topic()
         if not topic:
             return
-        message = {
-            "action": "proxy_publish",
-            "sender": self.topic,
-            "payload": {
-                "target": {"topic": topic, "action": "request_maintenance"},
-                "data": {"diagnostics_ok": diagnostics_ok, "component_id": self.component_id},
+        if config.droneport_mock_success():
+            return
+        self._proxy_request_external(
+            topic,
+            "request_charging",
+            {
+                "drone_id": config.orvd_drone_id(),
+                "battery": self._droneport_battery_pct(
+                    default=config.droneport_charging_battery_default(),
+                ),
             },
-        }
-        self.bus.publish(config.security_monitor_topic(), message)
+        )
 
 

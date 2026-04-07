@@ -3,7 +3,11 @@
 Источник: `agrodron/components/security_monitor/.env`, переменная `SECURITY_POLICIES`.
 После `make prepare` значение попадает в `agrodron/.generated/.env` как `SECURITY_MONITOR_SECURITY_POLICIES` с раскрытыми подстановками.
 
+Подстановка **`${SYSTEM_NAME}`** в коде МБ и в `prepare_system` — это **полный префикс топика** `v1.{SYSTEM_NAME}.{INSTANCE_ID}` (функция `topic_prefix()`), а не только короткое имя системы. Иначе в политиках получались строки вида `Agrodron.telemetry` вместо `v1.Agrodron.Agrodron001.telemetry`, и `sender` реальных сообщений не совпадал с таблицей — запросы к telemetry (и снимок в system_monitor) отклонялись или «висели» до таймаута.
+
 Каждая политика — тройка **(sender, topic, action)**: при `proxy_request` / `proxy_publish` монитор разрешает сообщение, если `sender` сообщения, целевой `topic` и `action` совпадают с записью.
+
+Значение **`"*"`** в поле `topic` и/или `action` означает «любой топик» и/или «любое действие» для указанного `sender` (проверка в `_is_allowed`). В исходном `SECURITY_POLICIES` для **`${SYSTEM_NAME}.system_monitor`** задано правило с `"topic": "*", "action": "*"`, чтобы монитор системы мог проксировать запросы ко всем компонентам без добавления отдельной строки на каждую пару топик/действие.
 
 Действия **только на топике самого МБ** (`isolation_start`, админские `set_policy` и т.д.) этим списком не задаются — они обрабатываются в коде монитора отдельно.
 
@@ -19,14 +23,15 @@
 | 6 | `${SYSTEM_NAME}.mission_handler` | `${SYSTEM_NAME}.limiter` | `mission_load` |
 | 7 | `${SYSTEM_NAME}.mission_handler` | `${SYSTEM_NAME}.journal` | `log_event` |
 | 8 | `${SYSTEM_NAME}.mission_handler` | `${SITL_TOPIC}` | `set_home` |
+| 8b | `${SYSTEM_NAME}.mission_handler` | `${SITL_VERIFIER_HOME_TOPIC}` | `__raw__` |
 | 9 | `${SYSTEM_NAME}.autopilot` | `${SYSTEM_NAME}.navigation` | `get_state` |
 | 10 | `${SYSTEM_NAME}.autopilot` | `${SYSTEM_NAME}.motors` | `set_target` |
 | 11 | `${SYSTEM_NAME}.autopilot` | `${SYSTEM_NAME}.sprayer` | `set_spray` |
 | 12 | `${SYSTEM_NAME}.autopilot` | `${SYSTEM_NAME}.journal` | `log_event` |
 | 13 | `${SYSTEM_NAME}.autopilot` | `${ORVD_TOPIC}` | `request_takeoff` |
-| 14 | `${SYSTEM_NAME}.autopilot` | `${DRONEPORT_TOPIC}` | `request_departure` |
+| 14 | `${SYSTEM_NAME}.autopilot` | `${DRONEPORT_TOPIC}` | `request_takeoff` |
 | 15 | `${SYSTEM_NAME}.autopilot` | `${DRONEPORT_TOPIC}` | `request_landing` |
-| 16 | `${SYSTEM_NAME}.autopilot` | `${DRONEPORT_TOPIC}` | `request_maintenance` |
+| 16 | `${SYSTEM_NAME}.autopilot` | `${DRONEPORT_TOPIC}` | `request_charging` |
 | 17 | `${SYSTEM_NAME}.autopilot` | `${NUS_TOPIC}` | `mission_status` |
 | 18 | `${SYSTEM_NAME}.navigation` | `${SITL_TELEMETRY_REQUEST_TOPIC}` | `__raw__` |
 | 19 | `${SYSTEM_NAME}.navigation` | `${SYSTEM_NAME}.journal` | `log_event` |
@@ -65,9 +70,9 @@
 | 11 | `v1.Agrodron.Agrodron001.autopilot` | `v1.Agrodron.Agrodron001.sprayer` | `set_spray` |
 | 12 | `v1.Agrodron.Agrodron001.autopilot` | `v1.Agrodron.Agrodron001.journal` | `log_event` |
 | 13 | `v1.Agrodron.Agrodron001.autopilot` | `v1.ORVD.ORVD001.main` | `request_takeoff` |
-| 14 | `v1.Agrodron.Agrodron001.autopilot` | `v1.drone_port.1.drone_manager` | `request_departure` |
+| 14 | `v1.Agrodron.Agrodron001.autopilot` | `v1.drone_port.1.drone_manager` | `request_takeoff` |
 | 15 | `v1.Agrodron.Agrodron001.autopilot` | `v1.drone_port.1.drone_manager` | `request_landing` |
-| 16 | `v1.Agrodron.Agrodron001.autopilot` | `v1.drone_port.1.drone_manager` | `request_maintenance` |
+| 16 | `v1.Agrodron.Agrodron001.autopilot` | `v1.drone_port.1.drone_manager` | `request_charging` |
 | 17 | `v1.Agrodron.Agrodron001.autopilot` | `v1.gcs.1.drone_manager` | `mission_status` |
 | 18 | `v1.Agrodron.Agrodron001.navigation` | `sitl.telemetry.request` | `__raw__` |
 | 19 | `v1.Agrodron.Agrodron001.navigation` | `v1.Agrodron.Agrodron001.journal` | `log_event` |
@@ -131,6 +136,11 @@
     "action": "set_home"
   },
   {
+    "sender": "${SYSTEM_NAME}.mission_handler",
+    "topic": "${SITL_VERIFIER_HOME_TOPIC}",
+    "action": "__raw__"
+  },
+  {
     "sender": "${SYSTEM_NAME}.autopilot",
     "topic": "${SYSTEM_NAME}.navigation",
     "action": "get_state"
@@ -158,7 +168,7 @@
   {
     "sender": "${SYSTEM_NAME}.autopilot",
     "topic": "${DRONEPORT_TOPIC}",
-    "action": "request_departure"
+    "action": "request_takeoff"
   },
   {
     "sender": "${SYSTEM_NAME}.autopilot",
@@ -168,7 +178,7 @@
   {
     "sender": "${SYSTEM_NAME}.autopilot",
     "topic": "${DRONEPORT_TOPIC}",
-    "action": "request_maintenance"
+    "action": "request_charging"
   },
   {
     "sender": "${SYSTEM_NAME}.autopilot",
@@ -345,7 +355,7 @@
   {
     "sender": "v1.Agrodron.Agrodron001.autopilot",
     "topic": "v1.drone_port.1.drone_manager",
-    "action": "request_departure"
+    "action": "request_takeoff"
   },
   {
     "sender": "v1.Agrodron.Agrodron001.autopilot",
@@ -355,7 +365,7 @@
   {
     "sender": "v1.Agrodron.Agrodron001.autopilot",
     "topic": "v1.drone_port.1.drone_manager",
-    "action": "request_maintenance"
+    "action": "request_charging"
   },
   {
     "sender": "v1.Agrodron.Agrodron001.autopilot",

@@ -278,8 +278,28 @@ class MissionHandlerComponent(BaseComponent):
             return
         sitl = config.sitl_topic()
         if not sitl:
+            self._log_to_journal(
+                "MISSION_HANDLER_SITL_HOME_SKIPPED",
+                {"reason": "SITL_TOPIC_empty", "mission_id": mission.get("mission_id") if isinstance(mission, dict) else None},
+            )
             return
         home_msg = self._build_home_message(steps[0])
+        mid = mission.get("mission_id") if isinstance(mission, dict) else None
+        lat = float(steps[0].get("lat") or 0.0)
+        lon = float(steps[0].get("lon") or 0.0)
+        alt_m = float(steps[0].get("alt_m") or 0.0)
+        self._log_to_journal(
+            "MISSION_HANDLER_SITL_HOME_SENDING",
+            {
+                "mission_id": mid,
+                "sitl_topic": sitl,
+                "drone_id": config.sitl_drone_id(),
+                "home_lat": lat,
+                "home_lon": lon,
+                "home_alt_m": alt_m,
+                "phase": "before_proxy_publish",
+            },
+        )
         message = {
             "action": "proxy_publish",
             "sender": self.topic,
@@ -288,7 +308,85 @@ class MissionHandlerComponent(BaseComponent):
                 "data": home_msg,
             },
         }
-        self.bus.publish(config.security_monitor_topic(), message)
+        ok = self.bus.publish(config.security_monitor_topic(), message)
+        if ok:
+            self._log_to_journal(
+                "MISSION_HANDLER_SITL_HOME_SENT",
+                {
+                    "mission_id": mid,
+                    "sitl_topic": sitl,
+                    "drone_id": config.sitl_drone_id(),
+                    "home_lat": lat,
+                    "home_lon": lon,
+                    "home_alt_m": alt_m,
+                    "phase": "publish_ok",
+                },
+            )
+        else:
+            self._log_to_journal(
+                "MISSION_HANDLER_SITL_HOME_SEND_FAILED",
+                {
+                    "mission_id": mid,
+                    "sitl_topic": sitl,
+                    "drone_id": config.sitl_drone_id(),
+                    "phase": "publish_failed",
+                },
+            )
+
+        # SITL-module verifier подписан на sitl-drone-home (RAW JSON), а не на SITL_TOPIC — без этого Redis не заполняется.
+        self._send_verifier_home_raw(lat, lon, alt_m, mid)
+
+    def _send_verifier_home_raw(
+        self,
+        home_lat: float,
+        home_lon: float,
+        home_alt: float,
+        mission_id: Optional[str],
+    ) -> None:
+        vtopic = config.sitl_verifier_home_topic()
+        if not vtopic:
+            return
+        raw = {
+            "drone_id": config.sitl_drone_id(),
+            "home_lat": home_lat,
+            "home_lon": home_lon,
+            "home_alt": home_alt,
+        }
+        self._log_to_journal(
+            "MISSION_HANDLER_SITL_HOME_VERIFIER_SENDING",
+            {
+                "mission_id": mission_id,
+                "verifier_home_topic": vtopic,
+                "drone_id": raw["drone_id"],
+                "home_lat": home_lat,
+                "home_lon": home_lon,
+                "home_alt": home_alt,
+            },
+        )
+        msg = {
+            "action": "proxy_publish",
+            "sender": self.topic,
+            "payload": {
+                "target": {"topic": vtopic, "action": "__raw__"},
+                "data": raw,
+            },
+        }
+        ok = self.bus.publish(config.security_monitor_topic(), msg)
+        if ok:
+            self._log_to_journal(
+                "MISSION_HANDLER_SITL_HOME_VERIFIER_SENT",
+                {
+                    "mission_id": mission_id,
+                    "verifier_home_topic": vtopic,
+                    "drone_id": raw["drone_id"],
+                    "note": "Формат sitl-drone-home.json для SITL verifier → controller → Redis.",
+                },
+            )
+        else:
+            self._log_to_journal(
+                "MISSION_HANDLER_SITL_HOME_VERIFIER_FAILED",
+                {"mission_id": mission_id, "verifier_home_topic": vtopic},
+            )
 
     # -------------------------------------------------------------- journal log
 

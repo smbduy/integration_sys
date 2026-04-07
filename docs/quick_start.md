@@ -75,6 +75,8 @@ make docker-down
 
 Переменные `BROKER_TYPE`, `ADMIN_USER`, `ADMIN_PASSWORD` задаются в `docker/.env` и `agrodron/.env` (итог — в `agrodron/.generated/.env`). Топики: `TOPIC_VERSION`, `SYSTEM_NAME`, `INSTANCE_ID`.
 
+При **MQTT** при нагрузке на монитор безопасности имеет значение размер пула обработки входящих сообщений — **`MQTT_BUS_CALLBACK_WORKERS`** (по умолчанию 32, см. [SYSTEM.md](SYSTEM.md) → раздел про MQTT и этот параметр).
+
 ## Документация
 
 - [docs/SYSTEM.md](SYSTEM.md) — полная документация системы AgroDron

@@ -10,9 +10,15 @@ from typing import Any, Dict, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.proxy_reply import unwrap_proxy_target_response
+from sdk.journal_log import publish_journal_event
 
 from components.navigation import config
 from components.navigation.src.sitl_normalizer import normalize_sitl_to_nav_state
+
+_SITL_FAIL_JOURNAL_INTERVAL_S = 10.0
+_SITL_TICK_JOURNAL_INTERVAL_S = 10.0
+_SITL_EXC_JOURNAL_INTERVAL_S = 30.0
 
 
 class NavigationComponent(BaseComponent):
@@ -35,6 +41,10 @@ class NavigationComponent(BaseComponent):
         self._config: Dict[str, Any] = {}
         self._lock = threading.Lock()
         self._housekeeping_thread: Optional[threading.Thread] = None
+        self._journal_logged_sitl_link = False
+        self._last_sitl_fail_journal_ts: float = 0.0
+        self._last_sitl_tick_journal_ts: float = 0.0
+        self._last_sitl_exc_journal_ts: float = 0.0
 
         super().__init__(
             component_id=component_id,
@@ -104,6 +114,18 @@ class NavigationComponent(BaseComponent):
 
     def start(self) -> None:
         super().start()
+        publish_journal_event(
+            self.bus,
+            self.topic,
+            "NAVIGATION_SITL_POLL_CONFIG",
+            source="navigation",
+            details={
+                "sitl_telemetry_request_topic": config.sitl_telemetry_request_topic(),
+                "drone_id": config.sitl_drone_id(),
+                "poll_interval_s": config.navigation_poll_interval_s(),
+                "request_timeout_s": config.navigation_request_timeout_s(),
+            },
+        )
         self._housekeeping_thread = threading.Thread(
             target=self._housekeeping_loop,
             name=f"{self.component_id}_housekeeping",
@@ -123,6 +145,16 @@ class NavigationComponent(BaseComponent):
             try:
                 self._poll_sitl_once()
             except Exception as exc:
+                now = time.monotonic()
+                if now - self._last_sitl_exc_journal_ts >= _SITL_EXC_JOURNAL_INTERVAL_S:
+                    self._last_sitl_exc_journal_ts = now
+                    publish_journal_event(
+                        self.bus,
+                        self.topic,
+                        "NAVIGATION_SITL_POLL_ERROR",
+                        source="navigation",
+                        details={"error": str(exc), "exc_type": type(exc).__name__},
+                    )
                 print(f"[{self.component_id}] SITL poll error: {exc}")
             time.sleep(interval)
 
@@ -137,8 +169,8 @@ class NavigationComponent(BaseComponent):
                     "topic": config.sitl_telemetry_request_topic(),
                     "action": "__raw__",
                 },
-                # SITL ожидает {"drone_id": ["drone_001"]} (список), без поля action.
-                "data": {"drone_id": [str(drone_id)]} if drone_id else {},
+                # Схема SITL: sitl-position-request.json — drone_id строка, pattern ^drone_[0-9]{3,4}$
+                "data": {"drone_id": str(drone_id)} if drone_id else {},
             },
         }
         response = self.bus.request(
@@ -146,9 +178,7 @@ class NavigationComponent(BaseComponent):
             message,
             timeout=config.navigation_request_timeout_s(),
         )
-        if not isinstance(response, dict):
-            return None
-        target_response = response.get("target_response")
+        target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return None
         # RAW-reply от SITL: обычно это {lat, lon, alt, ...} + correlation_id.
@@ -165,6 +195,25 @@ class NavigationComponent(BaseComponent):
         """Запрашивает SITL через шину, нормализует в NAV_STATE."""
         raw = self._request_sitl_state()
         if raw is None:
+            now = time.monotonic()
+            if now - self._last_sitl_fail_journal_ts >= _SITL_FAIL_JOURNAL_INTERVAL_S:
+                self._last_sitl_fail_journal_ts = now
+                publish_journal_event(
+                    self.bus,
+                    self.topic,
+                    "NAVIGATION_SITL_NO_DATA",
+                    source="navigation",
+                    details={
+                        "sitl_telemetry_request_topic": config.sitl_telemetry_request_topic(),
+                        "drone_id": self._config.get("drone_id") or config.sitl_drone_id(),
+                        "hint": "Нет ответа от SITL-адаптера или пустой unwrap; проверьте SITL и политики МБ.",
+                        "likely_causes": [
+                            "В Redis SITL нет ключа drone:<id>:state — часто пока не задан HOME (set_home). "
+                            "Обычно HOME уходит при load_mission (см. MISSION_HANDLER_SITL_HOME_SENT).",
+                            "Топики MQTT sitl/telemetry/*, контейнер sitl_messaging, сеть drones_net.",
+                        ],
+                    },
+                )
             return
 
         normalized = normalize_sitl_to_nav_state(raw, self._config)
@@ -172,6 +221,51 @@ class NavigationComponent(BaseComponent):
             self._last_nav_state = normalized
 
         self._publish_nav_state(normalized)
+
+        if not self._journal_logged_sitl_link:
+            self._journal_logged_sitl_link = True
+            publish_journal_event(
+                self.bus,
+                self.topic,
+                "NAVIGATION_SITL_LINK_OK",
+                source="navigation",
+                details={
+                    "lat": normalized.get("lat"),
+                    "lon": normalized.get("lon"),
+                    "alt_m": normalized.get("alt_m"),
+                    "sitl_request_topic": config.sitl_telemetry_request_topic(),
+                },
+            )
+            publish_journal_event(
+                self.bus,
+                self.topic,
+                "NAVIGATION_SITL_HOME_APPLIED",
+                source="navigation",
+                details={
+                    "drone_id": self._config.get("drone_id") or config.sitl_drone_id(),
+                    "lat": normalized.get("lat"),
+                    "lon": normalized.get("lon"),
+                    "alt_m": normalized.get("alt_m"),
+                    "note": "Первый ответ SITL с координатами; состояние в Redis/двойнике доступно после цепочки set_home.",
+                },
+            )
+        else:
+            now = time.monotonic()
+            if now - self._last_sitl_tick_journal_ts >= _SITL_TICK_JOURNAL_INTERVAL_S:
+                self._last_sitl_tick_journal_ts = now
+                publish_journal_event(
+                    self.bus,
+                    self.topic,
+                    "NAVIGATION_SITL_TICK",
+                    source="navigation",
+                    details={
+                        "lat": normalized.get("lat"),
+                        "lon": normalized.get("lon"),
+                        "alt_m": normalized.get("alt_m"),
+                        "gps_valid": normalized.get("gps_valid"),
+                        "fix": normalized.get("fix"),
+                    },
+                )
 
         gps_valid = bool(normalized.get("gps_valid", True))
         if not gps_valid:

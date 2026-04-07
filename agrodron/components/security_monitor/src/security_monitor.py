@@ -8,6 +8,7 @@ from typing import Dict, Any, Tuple, Set, Optional
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.topic_utils import topic_prefix
 from components.security_monitor import config
 
 
@@ -32,13 +33,13 @@ class SecurityMonitorComponent(BaseComponent):
             else os.environ.get("POLICY_ADMIN_SENDER", "")
         ).strip()
         raw_policies = security_policies if security_policies is not None else os.environ.get("SECURITY_POLICIES", "")
-        # Разворачиваем шаблоны: "${SYSTEM_NAME}", "$SYSTEM_NAME", "$${SYSTEM_NAME}" -> system_name().
+        # Как в prepare_system: "${SYSTEM_NAME}" -> полный префикс v1.{System}.{Instance}, не только имя системы.
         if isinstance(raw_policies, str) and raw_policies:
-            sys_name = config.system_name()
+            tp = topic_prefix()
             raw_policies = (
-                raw_policies.replace("$${SYSTEM_NAME}", sys_name)
-                .replace("${SYSTEM_NAME}", sys_name)
-                .replace("$SYSTEM_NAME", sys_name)
+                raw_policies.replace("$${SYSTEM_NAME}", tp)
+                .replace("${SYSTEM_NAME}", tp)
+                .replace("$SYSTEM_NAME", tp)
             )
         self._policies: Set[PolicyKey] = self._parse_policies(raw_policies)
         self._mode: str = "NORMAL"  # NORMAL | ISOLATED
@@ -70,6 +71,28 @@ class SecurityMonitorComponent(BaseComponent):
         self.register_handler("list_policies", self._handle_list_policies)
         self.register_handler("isolation_start", self._handle_isolation_start)
         self.register_handler("isolation_status", self._handle_isolation_status)
+
+    def _log_component_started(self) -> None:
+        """Журнал принимает log_event только от топика МБ — публикуем напрямую."""
+        from sdk.topic_utils import topic_for
+
+        journal_topic = topic_for("journal")
+        msg = {
+            "action": "log_event",
+            "sender": self.topic,
+            "payload": {
+                "event": "SECURITY_MONITOR_STARTED",
+                "source": "security_monitor",
+                "details": {
+                    "policies_count": len(self._policies),
+                    "mode": self._mode,
+                },
+            },
+        }
+        try:
+            self.bus.publish(journal_topic, msg)
+        except Exception as exc:
+            logger.debug("[%s] journal startup log: %s", self.component_id, exc)
 
     def _parse_policies(self, raw: str) -> Set[PolicyKey]:
         if not raw:
@@ -181,7 +204,18 @@ class SecurityMonitorComponent(BaseComponent):
         }
 
     def _is_allowed(self, sender_id: str, target_topic: str, target_action: str) -> bool:
-        return (sender_id, target_topic, target_action) in self._policies
+        key = (sender_id, target_topic, target_action)
+        if key in self._policies:
+            return True
+        # Шаблоны "*" в topic и/или action: любой топик и/или любое действие (для system_monitor и др.).
+        for s, t, a in self._policies:
+            if s != sender_id:
+                continue
+            topic_ok = t == "*" or t == target_topic
+            action_ok = a == "*" or a == target_action
+            if topic_ok and action_ok:
+                return True
+        return False
 
     # ------------------------------------------------------- isolation support
 
@@ -238,7 +272,7 @@ class SecurityMonitorComponent(BaseComponent):
         target = self._extract_target(payload)
         if target is None:
             logger.warning("[%s] proxy_request: no target in payload", self.component_id)
-            return None
+            return {"ok": False, "error": "no_target_in_payload"}
 
         target_topic, target_action, target_payload = target
         logger.info(
@@ -251,7 +285,13 @@ class SecurityMonitorComponent(BaseComponent):
                 "[%s] proxy_request denied by policy: sender=%s topic=%s action=%s",
                 self.component_id, sender_id, target_topic, target_action,
             )
-            return None
+            return {
+                "ok": False,
+                "error": "policy_denied",
+                "sender": sender_id,
+                "target_topic": target_topic,
+                "target_action": target_action,
+            }
 
         # RAW mode: target_action == "__raw__" means "send payload as-is" (SITL-style, no action/sender wrapper).
         if target_action == "__raw__":
@@ -271,7 +311,12 @@ class SecurityMonitorComponent(BaseComponent):
         )
         if not response:
             logger.warning("[%s] proxy_request: no response from %s (timeout or error)", self.component_id, target_topic)
-            return None
+            return {
+                "ok": False,
+                "error": "target_timeout",
+                "target_topic": target_topic,
+                "target_action": target_action,
+            }
 
         logger.info("[%s] proxy_request: got response from %s, replying to client", self.component_id, target_topic)
         return {

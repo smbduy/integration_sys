@@ -52,4 +52,9 @@ def telemetry_poll_interval_s() -> float:
 
 
 def telemetry_request_timeout_s() -> float:
-    return _get_float("TELEMETRY_REQUEST_TIMEOUT_S", 2.0, min_value=0.1)
+    """Таймаут каждого proxy_request (motors / sprayer / navigation) через МБ.
+
+    2 с часто мало при старте контейнеров и загруженном MQTT; без ответа-dict
+    в журнале будет motors_ok=false. Рекомендуется 5–8 с, меньше таймаута МБ (10 с).
+    """
+    return _get_float("TELEMETRY_REQUEST_TIMEOUT_S", 6.0, min_value=0.1)

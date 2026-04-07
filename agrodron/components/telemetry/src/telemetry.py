@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 from broker.system_bus import SystemBus
 from sdk.base_component import BaseComponent
+from sdk.journal_log import publish_journal_event
+from sdk.proxy_reply import unwrap_proxy_target_response
 
 from components.telemetry import config
 
@@ -33,6 +35,7 @@ class TelemetryComponent(BaseComponent):
         self._poll_thread: Optional[threading.Thread] = None
         self._poll_interval_s: float = config.telemetry_poll_interval_s()
         self._request_timeout_s: float = config.telemetry_request_timeout_s()
+        self._journal_logged_first_aggregate = False
 
         super().__init__(
             component_id=component_id,
@@ -58,9 +61,18 @@ class TelemetryComponent(BaseComponent):
         )
         self._poll_thread.start()
 
-    def _handle_get_state(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _handle_get_state(self, message: Dict[str, Any]) -> Dict[str, Any]:
         if not self._is_trusted_sender(message):
-            return None
+            # Всегда dict, чтобы BaseComponent отправил ответ по reply_to (иначе МБ ждёт до таймаута).
+            return {
+                "motors": None,
+                "sprayer": None,
+                "navigation": None,
+                "last_poll_ts": 0.0,
+                "telemetry_trust_error": True,
+                "sender_expected": config.security_monitor_topic(),
+                "sender_received": message.get("sender"),
+            }
         with self._lock:
             return {
                 "motors": dict(self._last_motors) if isinstance(self._last_motors, dict) else None,
@@ -90,6 +102,26 @@ class TelemetryComponent(BaseComponent):
                 self._last_navigation = navigation_state
             self._last_poll_ts = time.time()
 
+        has_any = (
+            isinstance(motors_state, dict)
+            or isinstance(sprayer_state, dict)
+            or isinstance(navigation_state, dict)
+        )
+        if has_any and not self._journal_logged_first_aggregate:
+            self._journal_logged_first_aggregate = True
+            publish_journal_event(
+                self.bus,
+                self.topic,
+                "TELEMETRY_AGGREGATE_FIRST_OK",
+                source="telemetry",
+                details={
+                    # true = получен dict от цели; false = таймаут/ошибка proxy, не «режим моторов»
+                    "motors_ok": isinstance(motors_state, dict),
+                    "sprayer_ok": isinstance(sprayer_state, dict),
+                    "navigation_ok": isinstance(navigation_state, dict),
+                },
+            )
+
     def _proxy_get_state(self, target_topic: str, target_action: str) -> Optional[Dict[str, Any]]:
         message = {
             "action": "proxy_request",
@@ -104,9 +136,7 @@ class TelemetryComponent(BaseComponent):
             message,
             timeout=self._request_timeout_s,
         )
-        if not isinstance(response, dict):
-            return None
-        target_response = response.get("target_response")
+        target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return None
         # navigation кладёт снимок в payload; motors/sprayer отдают плоский dict

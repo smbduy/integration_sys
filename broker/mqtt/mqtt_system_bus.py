@@ -48,7 +48,14 @@ class MQTTSystemBus(SystemBus):
         self._reply_topic = f"replies/{self.client_id}"
         self._connected = False
         self._started = False
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mqtt_cb")
+        # Обработчики подписок (в т.ч. security_monitor с блокирующим proxy_request) идут через пул.
+        # При max_workers=4 несколько долгих proxy к МБ могли откладывать обработку новых запросов
+        # дольше внешнего таймаута (симптом: первый снимок ok, дальше таймауты).
+        _pool = int(os.environ.get("MQTT_BUS_CALLBACK_WORKERS", "32"))
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(4, _pool),
+            thread_name_prefix="mqtt_cb",
+        )
 
     def _topic_to_mqtt(self, topic: str) -> str:
         """Топик systems.xxx -> systems/xxx для MQTT."""

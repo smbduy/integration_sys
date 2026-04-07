@@ -1,14 +1,17 @@
 """Unit-тесты компонента security_monitor."""
 import asyncio
+import json
+
 from broker.system_bus import SystemBus
 from components.security_monitor import config
 from components.security_monitor.src.security_monitor import SecurityMonitorComponent
-from sdk.topic_utils import topic_for
+from sdk.topic_utils import topic_for, topic_prefix
 
 AUTOPILOT_TOPIC = topic_for("autopilot")
 NAVIGATION_TOPIC = topic_for("navigation")
 MOTORS_TOPIC = topic_for("motors")
 JOURNAL_TOPIC = topic_for("journal")
+SYSTEM_MONITOR_TOPIC = topic_for("system_monitor")
 
 
 class DummyBus(SystemBus):
@@ -92,6 +95,38 @@ def test_proxy_publish_denied_no_policy():
     result = comp._handle_proxy_publish(msg)
     assert result is None
     assert len(comp.bus.published) == 0
+
+
+def test_security_policies_placeholder_system_name_is_topic_prefix():
+    """${SYSTEM_NAME} в JSON должен давать полный префикс v1.*.*, как в prepare_system."""
+    policies = json.dumps(
+        [{"sender": "${SYSTEM_NAME}.system_monitor", "topic": "${SYSTEM_NAME}.telemetry", "action": "get_state"}]
+    )
+    comp = SecurityMonitorComponent(
+        component_id="sm",
+        bus=DummyBus(),
+        security_policies=policies,
+    )
+    expected_sender = f"{topic_prefix()}.system_monitor"
+    expected_topic = f"{topic_prefix()}.telemetry"
+    assert (expected_sender, expected_topic, "get_state") in comp._policies
+
+
+def test_policy_wildcard_allows_any_topic_and_action():
+    comp = _make_component(policies=[
+        {"sender": SYSTEM_MONITOR_TOPIC, "topic": "*", "action": "*"},
+    ])
+    assert comp._is_allowed(SYSTEM_MONITOR_TOPIC, MOTORS_TOPIC, "set_target")
+    assert comp._is_allowed(SYSTEM_MONITOR_TOPIC, NAVIGATION_TOPIC, "get_state")
+    assert comp._is_allowed(SYSTEM_MONITOR_TOPIC, "v1.External.Any.topic", "custom_action")
+
+
+def test_policy_wildcard_topic_only():
+    comp = _make_component(policies=[
+        {"sender": SYSTEM_MONITOR_TOPIC, "topic": "*", "action": "get_state"},
+    ])
+    assert comp._is_allowed(SYSTEM_MONITOR_TOPIC, MOTORS_TOPIC, "get_state")
+    assert not comp._is_allowed(SYSTEM_MONITOR_TOPIC, MOTORS_TOPIC, "set_target")
 
 
 def test_proxy_request_allowed():

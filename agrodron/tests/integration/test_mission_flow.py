@@ -110,7 +110,7 @@ def test_start_mission_orvd_denied(tmp_path):
 
     bus, sm, autopilot, mission_handler, journal = _setup(tmp_path)
 
-    sm._policies.add((topic_for("autopilot"), os.environ["ORVD_TOPIC"], "request_departure"))
+    sm._policies.add((topic_for("autopilot"), os.environ["ORVD_TOPIC"], "request_takeoff"))
 
     bus.register_topic_handler(os.environ["ORVD_TOPIC"], lambda msg: {"approved": False, "reason": "restricted"})
     bus.register_topic_handler(os.environ.get("NUS_TOPIC", ""), lambda msg: {"ok": True})

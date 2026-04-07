@@ -119,7 +119,7 @@
 Ответ при отказе Дронопорта:
 
 ```json
-{ "ok": false, "error": "droneport_departure_denied" }
+{ "ok": false, "error": "droneport_takeoff_denied" }
 ```
 
 ### Действия дрон → НУС
@@ -151,6 +151,8 @@
 ## ОРВД (Организация Воздушного Движения)
 
 **Топик**: `ORVD_TOPIC` (в репозитории: `v1.ORVD.ORVD001.main`).
+
+Для стенда без реального сервиса на `ORVD_TOPIC` в автопилоте можно включить **`AUTOPILOT_ORVD_MOCK_SUCCESS`** (`1`, `true`, `yes` или `on`): запрос `request_takeoff` по шине **не выполняется**, автопилот считает, что получен ответ **`takeoff_authorized`**, в журнал уходит `ORVD_TAKEOFF_APPROVED` с полями `stub: true` и `reason: AUTOPILOT_ORVD_MOCK_SUCCESS`. В `agrodron/docker-compose.yml` переменная пробрасывается как `AUTOPILOT_ORVD_MOCK_SUCCESS` (источник в merged `.env`: `AUTOPILOT_AUTOPILOT_ORVD_MOCK_SUCCESS`).
 
 ### Действия дрон → ОРВД
 
@@ -199,56 +201,84 @@
 
 ## Дронопорт
 
-**Топик**: `DRONEPORT_TOPIC` (в репозитории: `v1.drone_port.1.drone_manager`).
+**Топик**: `DRONEPORT_TOPIC` — компонент **drone_manager** DronePort (в репозитории интеграции: `v1.drone_port.1.drone_manager`). Имена действий совпадают с `DroneManager` в DronePortGCS.
 
-### Действия дрон → Дронопорт
+Без реального сервиса на `DRONEPORT_TOPIC` в автопилоте можно включить **`AUTOPILOT_DRONEPORT_MOCK_SUCCESS`** (`1`, `true`, `yes` или `on`): запросы **`request_takeoff`**, **`request_landing`** и **`request_charging`** по шине **не выполняются**; для взлёта в журнал пишется `DRONEPORT_TAKEOFF_APPROVED` с `stub: true` и `reason: AUTOPILOT_DRONEPORT_MOCK_SUCCESS`. В compose: `AUTOPILOT_DRONEPORT_MOCK_SUCCESS` (merged: `AUTOPILOT_AUTOPILOT_DRONEPORT_MOCK_SUCCESS`).
 
-#### request_departure
+### Действия дрон → Дронопорт (через МБ: `proxy_request`)
+
+#### request_takeoff
+
+Запрос на взлёт / выезд с порта (после разрешения ОРВД).
 
 ```json
 {
-  "action": "request_departure",
+  "action": "request_takeoff",
   "sender": "v1.Agrodron.Agrodron001.security_monitor",
   "payload": {
-    "mission_id": "mission-001"
+    "drone_id": "Agrodron001",
+    "battery": 95.0
   }
 }
 ```
 
-Ожидаемый ответ:
+`drone_id` совпадает с `INSTANCE_ID` системы дрона (см. `orvd_drone_id()` / `INSTANCE_ID`). Поле **`battery`** (проценты) передаёт актуальный заряд с борта: DronePort иначе берёт значение только из Redis и при пороге **> 80** может отказать (`Not enough battery for takeoff`), если в реестре устаревшие или «unknown» данные. Если в навигации нет батареи, автопилот подставляет `DRONEPORT_TAKEOFF_BATTERY_DEFAULT` (по умолчанию 95).
+
+Успешный ответ (пример):
 
 ```json
-{ "approved": true }
+{
+  "battery": 95.0,
+  "port_id": "port-1",
+  "port_coordinates": { "lat": "60.0", "lon": "30.0" },
+  "from": "v1.drone_port.1.drone_manager"
+}
+```
+
+Отказ:
+
+```json
+{
+  "error": "Not enough battery for takeoff",
+  "from": "v1.drone_port.1.drone_manager"
+}
 ```
 
 #### request_landing
+
+Запрос посадки и назначения порта.
 
 ```json
 {
   "action": "request_landing",
   "sender": "v1.Agrodron.Agrodron001.security_monitor",
-  "payload": {}
-}
-```
-
-Ожидаемый ответ:
-
-```json
-{ "approved": true }
-```
-
-#### request_maintenance
-
-```json
-{
-  "action": "request_maintenance",
-  "sender": "v1.Agrodron.Agrodron001.security_monitor",
   "payload": {
-    "diagnostics_ok": true,
-    "component_id": "autopilot"
+    "drone_id": "Agrodron001",
+    "model": "agrodron"
   }
 }
 ```
+
+`model` задаётся переменной `DRONEPORT_DRONE_MODEL` (по умолчанию `agrodron`).
+
+Успех: в ответе есть `port_id`. Отказ: поле `error` (например нет свободных портов).
+
+#### request_charging
+
+Запрос зарядки на порту (после завершения миссии / посадки).
+
+```json
+{
+  "action": "request_charging",
+  "sender": "v1.Agrodron.Agrodron001.security_monitor",
+  "payload": {
+    "drone_id": "Agrodron001",
+    "battery": 42.0
+  }
+}
+```
+
+Уровень заряда берётся из навигации (`battery_pct` / `battery`), иначе — `DRONEPORT_CHARGING_BATTERY_DEFAULT` (по умолчанию 50). Синхронного ответа от DronePort для этого действия может не быть.
 
 ---
 
@@ -305,6 +335,8 @@ Reply/response делается через `reply_to` + `correlation_id`, кот
 }
 ```
 
+**SITL-module (verifier)** в репозитории слушает не `SITL_TOPIC`, а **`SITL_VERIFIER_HOME_TOPIC`** (по умолчанию `sitl-drone-home`) и схему `sitl-drone-home.json`: `drone_id`, `home_lat`, `home_lon`, `home_alt`. После загрузки миссии `mission_handler` дополнительно шлёт туда **RAW** (`proxy_publish` с `__raw__`), иначе Redis SITL не получает HOME.
+
 ### Действия SITL → дрон
 
 #### Ответ на запрос телеметрии/навигации (SITL → reply_to)
@@ -338,14 +370,14 @@ RAW request в `SITL_TELEMETRY_REQUEST_TOPIC`:
 НУС -> security_monitor : proxy_request -> mission_handler : load_mission (WPL)
 НУС -> security_monitor : proxy_request -> autopilot : cmd START
   autopilot -> ОРВД      : request_takeoff
-  autopilot -> Дронопорт : request_departure
+  autopilot -> Дронопорт : request_takeoff
   [при отказе] autopilot -> НУС : mission_status (mission_rejected)
   [при успехе] autopilot выполняет миссию
   [по завершении]
     autopilot -> Дронопорт: request_landing
     autopilot -> motors: land (посадка)
     autopilot: self_diagnostics()
-    autopilot -> Дронопорт: request_maintenance
+    autopilot -> Дронопорт: request_charging
     autopilot -> НУС: mission_status (mission_completed)
 ```
 

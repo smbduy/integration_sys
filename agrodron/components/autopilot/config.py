@@ -48,6 +48,12 @@ def orvd_topic() -> str:
     return (os.environ.get("ORVD_TOPIC") or os.environ.get("ORVD_EXTERNAL_TOPIC") or "").strip()
 
 
+def orvd_mock_success() -> bool:
+    """Если True — не вызывать ОрВД по шине, считать разрешение на взлёт полученным (отладка / стенд без ОРВД)."""
+    raw = (os.environ.get("AUTOPILOT_ORVD_MOCK_SUCCESS") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def orvd_drone_id() -> str:
     """Идентификатор дрона для ОрВД = INSTANCE_ID системы."""
     return instance_id()
@@ -59,6 +65,27 @@ def nus_topic() -> str:
 
 def droneport_topic() -> str:
     return (os.environ.get("DRONEPORT_TOPIC") or "").strip()
+
+
+def droneport_mock_success() -> bool:
+    """Если True — не вызывать Дронопорт по шине, считать ответы успешными (стенд без внешнего DronePort)."""
+    raw = (os.environ.get("AUTOPILOT_DRONEPORT_MOCK_SUCCESS") or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def droneport_drone_model() -> str:
+    """Модель дрона для payload DronePort `request_landing` (поле `model`)."""
+    return (os.environ.get("DRONEPORT_DRONE_MODEL") or "agrodron").strip()
+
+
+def droneport_charging_battery_default() -> float:
+    """Значение заряда (%) для `request_charging`, если в навигации нет поля battery."""
+    return _get_float("DRONEPORT_CHARGING_BATTERY_DEFAULT", 50.0, min_value=0.0)
+
+
+def droneport_takeoff_battery_default() -> float:
+    """Значение заряда (%) в `request_takeoff`, если в навигации нет батареи. DronePort требует > 80."""
+    return _get_float("DRONEPORT_TAKEOFF_BATTERY_DEFAULT", 95.0, min_value=0.0)
 
 
 def sitl_topic() -> str:

@@ -6,8 +6,12 @@ from typing import Any, Dict, Optional
 
 from broker.system_bus import SystemBus
 from sdk.base_component import BaseComponent
+from sdk.journal_log import publish_journal_event
 
 from components.motors import config
+
+# Не чаще одной записи в журнал (веб-монитор) по обычным командам SITL
+_SITL_JOURNAL_CMD_INTERVAL_S = 2.0
 
 # Лимиты по схеме SITL (ARCHITECTURE.md): vx,vy [-50..50], vz [-10..10], mag_heading [0..359.9]
 _VX_VY_MIN, _VX_VY_MAX = -50.0, 50.0
@@ -46,6 +50,7 @@ class MotorsComponent(BaseComponent):
         self._last_target: Optional[Dict[str, Any]] = None
         self._last_cmd_ts: float = 0.0
         self._temperature_c: float = config.motors_temperature_c_default()
+        self._last_sitl_journal_ts: float = 0.0
 
         super().__init__(
             component_id=component_id,
@@ -63,6 +68,20 @@ class MotorsComponent(BaseComponent):
         self.register_handler("set_target", self._handle_set_target)
         self.register_handler("land", self._handle_land)
         self.register_handler("get_state", self._handle_get_state)
+
+    def start(self) -> None:
+        super().start()
+        publish_journal_event(
+            self.bus,
+            self.topic,
+            "MOTORS_SITL_READY",
+            source="motors",
+            details={
+                "sitl_mode": config.sitl_mode(),
+                "sitl_commands_topic": config.sitl_commands_topic(),
+                "drone_id": config.sitl_drone_id(),
+            },
+        )
 
     def _handle_set_target(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not self._is_trusted_sender(message):
@@ -101,7 +120,7 @@ class MotorsComponent(BaseComponent):
         self._mode = MotorsMode.TRACKING
         self._last_cmd_ts = time.time()
 
-        self._emit_sitl_command(target)
+        self._emit_sitl_command(target, reason="set_target")
         return {"ok": True, "mode": self._mode}
 
     def _handle_land(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -111,15 +130,18 @@ class MotorsComponent(BaseComponent):
         self._last_cmd_ts = time.time()
         # Аварийная посадка: нулевая скорость, emergency_landing=True
         last = self._last_target or {}
-        self._emit_sitl_command({
-            "vx": 0.0, "vy": 0.0, "vz": -2.0,
-            "alt_m": last.get("alt_m", 0.0),
-            "lat": last.get("lat", 0.0),
-            "lon": last.get("lon", 0.0),
-            "heading_deg": last.get("heading_deg", 0.0),
-            "drop": False,
-            "emergency_landing": True,
-        })
+        self._emit_sitl_command(
+            {
+                "vx": 0.0, "vy": 0.0, "vz": -2.0,
+                "alt_m": last.get("alt_m", 0.0),
+                "lat": last.get("lat", 0.0),
+                "lon": last.get("lon", 0.0),
+                "heading_deg": last.get("heading_deg", 0.0),
+                "drop": False,
+                "emergency_landing": True,
+            },
+            reason="land",
+        )
         return {"ok": True, "mode": self._mode}
 
     def _handle_get_state(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -159,7 +181,7 @@ class MotorsComponent(BaseComponent):
             "mag_heading": round(mag_heading, 1),
         }
 
-    def _emit_sitl_command(self, command: Dict[str, Any]) -> None:
+    def _emit_sitl_command(self, command: Dict[str, Any], *, reason: str = "command") -> None:
         """
         Публикует команду в SITL через монитор безопасности (proxy_publish).
         Топик и брокер задаются в ENV (SITL_COMMANDS_TOPIC, брокер системы).
@@ -177,4 +199,40 @@ class MotorsComponent(BaseComponent):
             },
         }
         self.bus.publish(config.security_monitor_topic(), message)
+        self._journal_sitl_command(
+            sitl_msg,
+            reason=reason,
+            emergency=bool(command.get("emergency_landing")),
+        )
 
+    def _journal_sitl_command(
+        self,
+        sitl_msg: Dict[str, Any],
+        *,
+        reason: str,
+        emergency: bool,
+    ) -> None:
+        """Запись в журнал для веб-монитора: посадка/авария — всегда; set_target — не чаще раз в интервал."""
+        now = time.monotonic()
+        force = emergency or reason == "land"
+        if not force and now - self._last_sitl_journal_ts < _SITL_JOURNAL_CMD_INTERVAL_S:
+            return
+        if not force:
+            self._last_sitl_journal_ts = now
+        event = "SITL_MOTORS_LAND_CMD" if force else "SITL_MOTORS_OUT"
+        publish_journal_event(
+            self.bus,
+            self.topic,
+            event,
+            source="motors",
+            details={
+                "reason": reason,
+                "sitl_commands_topic": config.sitl_commands_topic(),
+                "drone_id": sitl_msg.get("drone_id"),
+                "vx": sitl_msg.get("vx"),
+                "vy": sitl_msg.get("vy"),
+                "vz": sitl_msg.get("vz"),
+                "mag_heading": sitl_msg.get("mag_heading"),
+                "emergency": emergency,
+            },
+        )
