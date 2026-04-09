@@ -17,6 +17,7 @@ def test_sitl_position_v1():
     assert result["alt_m"] == 100.2
     assert result["ground_speed_mps"] == 1.23
     assert result["drone_id"] == "drone_001"
+    assert result["gps_valid"] is True
 
 
 def test_redis_state():
@@ -39,6 +40,7 @@ def test_redis_state():
     assert abs(result["ground_speed_mps"] - (1.23**2 + 0.87**2) ** 0.5) < 0.01
     assert result["heading_deg"] == 25.8
     assert result["timestamp"] == "2026-03-08T16:40:00Z"
+    assert result["gps_valid"] is True
 
 
 def test_nmea_derived():

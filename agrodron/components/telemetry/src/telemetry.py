@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from broker.system_bus import SystemBus
 from sdk.base_component import BaseComponent
 from sdk.journal_log import publish_journal_event
+from sdk.proxy_reply import extract_navigation_nav_state_from_target_response
 from sdk.proxy_reply import unwrap_proxy_target_response
 
 from components.telemetry import config
@@ -139,8 +140,10 @@ class TelemetryComponent(BaseComponent):
         target_response = unwrap_proxy_target_response(response)
         if not isinstance(target_response, dict):
             return None
-        # navigation кладёт снимок в payload; motors/sprayer отдают плоский dict
         inner = target_response.get("payload")
-        if isinstance(inner, dict):
-            return inner
-        return target_response
+        if not isinstance(inner, dict):
+            return target_response
+        if target_topic == config.navigation_topic():
+            nav = extract_navigation_nav_state_from_target_response(target_response)
+            return nav if nav is not None else inner
+        return inner

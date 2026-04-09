@@ -60,6 +60,11 @@ def telemetry_request_timeout_s() -> float:
     return _get_float("SYSTEM_MONITOR_TELEMETRY_TIMEOUT_S", 15.0, min_value=0.1)
 
 
+def component_request_timeout_s() -> float:
+    """Таймаут запроса get_state для отдельных компонент на панели."""
+    return _get_float("SYSTEM_MONITOR_COMPONENT_TIMEOUT_S", 2.0, min_value=0.1)
+
+
 def journal_buffer_max() -> int:
     return _get_int("SYSTEM_MONITOR_JOURNAL_BUFFER", 2000, min_value=10)
 

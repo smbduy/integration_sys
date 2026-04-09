@@ -89,3 +89,17 @@ def _run_mission_load_and_start():
     state = comp._handle_get_state({"action": "get_state"})
     assert state["state"] == "EXECUTING"
 
+
+def test_mission_landing_finishes_and_returns_to_idle() -> None:
+    comp = _make_component()
+    comp._mission = {"mission_id": "m-land-1", "steps": [{"lat": 55.0, "lon": 37.0, "alt_m": 5.0}]}
+    comp._state = "LANDING"
+    comp._landing_active = True
+    comp._last_nav_state = {"lat": 55.0, "lon": 37.0, "alt_m": 0.2, "heading_deg": 90.0}
+
+    comp._step_control()
+
+    state = comp._handle_get_state({"action": "get_state"})
+    assert state["state"] == "IDLE"
+    assert state["mission_id"] is None
+

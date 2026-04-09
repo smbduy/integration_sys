@@ -22,6 +22,16 @@ class SystemMonitorComponent(BaseComponent):
     """
 
     def __init__(self, component_id: str, bus: SystemBus, topic: str = ""):
+        self._dashboard_components = (
+            "autopilot",
+            "navigation",
+            "motors",
+            "sprayer",
+            "limiter",
+            "mission_handler",
+            "telemetry",
+            "emergensy",
+        )
         self._journal_topic = config.journal_topic()
         self._lock = threading.Lock()
         self._journal_events: Deque[Dict[str, Any]] = deque(maxlen=config.journal_buffer_max())
@@ -29,6 +39,9 @@ class SystemMonitorComponent(BaseComponent):
         self._last_telemetry_ts: float = 0.0
         self._last_telemetry_error: Optional[str] = None
         self._last_telemetry_debug: Optional[str] = None
+        self._last_components_snapshot: Dict[str, Dict[str, Any]] = {}
+        self._last_components_ts: float = 0.0
+        self._component_request_timeout_s: float = config.component_request_timeout_s()
 
         self._poll_thread: Optional[threading.Thread] = None
         self._poll_interval_s = config.telemetry_poll_interval_s()
@@ -85,9 +98,12 @@ class SystemMonitorComponent(BaseComponent):
         while self._running:
             try:
                 snap, dbg = self._fetch_telemetry()
+                components = self._fetch_components_snapshot()
                 with self._lock:
                     self._last_telemetry_ts = time.time()
                     self._last_telemetry_debug = dbg
+                    self._last_components_snapshot = components
+                    self._last_components_ts = self._last_telemetry_ts
                     if snap is not None:
                         self._last_telemetry = snap
                         self._last_telemetry_error = None
@@ -175,6 +191,44 @@ class SystemMonitorComponent(BaseComponent):
             time.sleep(0.3)
         return None, last_dbg
 
+    def _fetch_component_state(self, component_name: str) -> Dict[str, Any]:
+        msg = {
+            "action": "proxy_request",
+            "sender": self.topic,
+            "payload": {
+                "target": {"topic": config.topic_for(component_name), "action": "get_state"},
+                "data": {},
+            },
+        }
+        response = self.bus.request(
+            config.security_monitor_topic(),
+            msg,
+            timeout=self._component_request_timeout_s,
+        )
+        if not isinstance(response, dict):
+            return {"ok": False, "error": "timeout_or_invalid_response"}
+        outer_pl = response.get("payload")
+        if isinstance(outer_pl, dict) and outer_pl.get("ok") is False:
+            return {"ok": False, "error": str(outer_pl.get("error", "proxy_failed"))}
+        target_response = unwrap_proxy_target_response(response)
+        if not isinstance(target_response, dict):
+            return {"ok": False, "error": "unwrap_failed"}
+        payload = target_response.get("payload")
+        if isinstance(payload, dict):
+            return {"ok": True, "state": payload}
+        if isinstance(target_response, dict):
+            return {"ok": True, "state": target_response}
+        return {"ok": False, "error": "empty_state"}
+
+    def _fetch_components_snapshot(self) -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {}
+        for name in self._dashboard_components:
+            try:
+                out[name] = self._fetch_component_state(name)
+            except Exception as exc:
+                out[name] = {"ok": False, "error": f"exception: {exc}"}
+        return out
+
     def _snapshot(self) -> Dict[str, Any]:
         with self._lock:
             events: List[Dict[str, Any]] = list(self._journal_events)
@@ -185,6 +239,9 @@ class SystemMonitorComponent(BaseComponent):
                 "telemetry_error": self._last_telemetry_error,
                 "telemetry_debug": self._last_telemetry_debug,
                 "telemetry_request_timeout_s": self._request_timeout_s,
+                "component_request_timeout_s": self._component_request_timeout_s,
+                "components_snapshot": self._last_components_snapshot,
+                "components_ts": self._last_components_ts,
                 "component_id": self.component_id,
                 "journal_topic_tap": self._journal_topic,
             }

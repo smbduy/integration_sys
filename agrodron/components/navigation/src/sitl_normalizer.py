@@ -130,11 +130,27 @@ def normalize_sitl_to_nav_state(raw: Dict[str, Any], config: Dict[str, Any] | No
         result["fix"] = "3D" if quality >= 1 and result["satellites"] >= 4 else "2D" if quality >= 1 else "NONE"
 
     # --- Качество GPS ---
+    nmea_root = raw.get("nmea") if isinstance(raw.get("nmea"), dict) else {}
+    gga_block = nmea_root.get("gga") if isinstance(nmea_root, dict) else None
+    has_gga = isinstance(gga_block, dict) and bool(gga_block)
+
     result["gps_valid"] = (
         result["fix"] == "3D"
         and result["satellites"] >= 4
         and result["hdop"] < 10.0
     )
+    # Ответ SITL из Redis (lat/lon/alt без NMEA): строгие критерии выше дают gps_valid=False,
+    # хотя координаты есть — для навигации считаем их валидными, не трогая SITL.
+    if not result["gps_valid"] and not has_gga:
+        derived_raw = raw.get("derived") if isinstance(raw.get("derived"), dict) else {}
+        has_position_source = ("lat" in raw and "lon" in raw) or (
+            derived_raw.get("lat_decimal") is not None or derived_raw.get("lon_decimal") is not None
+        )
+        if has_position_source:
+            la, lo = result["lat"], result["lon"]
+            if abs(la) <= 90.0 and abs(lo) <= 180.0:
+                result["gps_valid"] = True
+
     if raw.get("drone_id") and "drone_id" not in result:
         result["drone_id"] = str(raw["drone_id"])
     if raw.get("timestamp"):

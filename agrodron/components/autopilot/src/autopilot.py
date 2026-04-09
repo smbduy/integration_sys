@@ -4,6 +4,7 @@ import threading
 import time
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.proxy_reply import extract_navigation_nav_state_from_target_response
 from sdk.proxy_reply import unwrap_proxy_target_response
 
 from components.autopilot import config
@@ -34,6 +35,7 @@ class AutopilotComponent(BaseComponent):
         # Флаг активного режима «Ковер»: в этом режиме автопилот выполняет
         # посадку до земли, затем переходит в ожидание (PAUSED).
         self._kover_active: bool = False
+        self._landing_active: bool = False
 
         self._control_thread: Optional[threading.Thread] = None
         self._control_interval_s: float = config.autopilot_control_interval_s()
@@ -202,15 +204,16 @@ class AutopilotComponent(BaseComponent):
             timeout=self._request_timeout_s,
         )
         target_response = unwrap_proxy_target_response(response)
-        if not isinstance(target_response, dict):
-            return
-
-        nav_payload = target_response.get("payload")
-        if isinstance(nav_payload, dict):
-            self._last_nav_state = nav_payload
+        nav_state = extract_navigation_nav_state_from_target_response(target_response)
+        if isinstance(nav_state, dict):
+            self._last_nav_state = nav_state
 
     def _step_control(self) -> None:
         if self._last_nav_state is None:
+            return
+
+        if self._landing_active:
+            self._handle_mission_landing()
             return
 
         # Обработка режима «Ковер»: посадка до земли, затем ожидание.
@@ -272,11 +275,14 @@ class AutopilotComponent(BaseComponent):
 
         d_lat = t_lat - lat
         d_lon = t_lon - lon
-        distance_m = math.hypot(d_lat, d_lon) * 111_000.0
+        distance_xy_m = math.hypot(d_lat, d_lon) * 111_000.0
+        dz_m = t_alt - alt
 
-        # Порог достижения точки
-        reach_threshold_m = 2.0
-        if distance_m <= reach_threshold_m:
+        # Порог достижения точки: по горизонтали и высоте.
+        reach_threshold_xy_m = 2.0
+        reach_threshold_z_m = 0.5
+        reached_step = (distance_xy_m <= reach_threshold_xy_m) and (abs(dz_m) <= reach_threshold_z_m)
+        if reached_step:
             if self._current_step_index < len(steps) - 1:
                 self._current_step_index += 1
                 step = steps[self._current_step_index]
@@ -288,13 +294,11 @@ class AutopilotComponent(BaseComponent):
                     return
                 d_lat = t_lat - lat
                 d_lon = t_lon - lon
-                distance_m = math.hypot(d_lat, d_lon) * 111_000.0
+                distance_xy_m = math.hypot(d_lat, d_lon) * 111_000.0
             else:
-                self._state = "COMPLETED"
                 mid = self._mission.get("mission_id")
-                self._log_to_journal("AUTOPILOT_MISSION_COMPLETED", {"mission_id": mid})
                 self._send_sprayer(False)
-                self._complete_landing_sequence(lat, lon, alt)
+                self._start_mission_landing(mid)
                 return
 
         # В состоянии PAUSED отправляем "удержание": нулевая скорость, опрыскиватель выключен.
@@ -567,21 +571,51 @@ class AutopilotComponent(BaseComponent):
         }
         self.bus.publish(config.security_monitor_topic(), message)
 
-    def _complete_landing_sequence(self, lat: float, lon: float, alt: float) -> None:
+    def _start_mission_landing(self, mission_id: Optional[str]) -> None:
+        self._landing_active = True
+        self._state = "LANDING"
         self._request_landing_droneport()
+        self._log_to_journal("AUTOPILOT_LANDING_STARTED", {"mission_id": mission_id})
+
+    def _handle_mission_landing(self) -> None:
+        if not self._last_nav_state:
+            return
+
+        try:
+            alt = float(self._last_nav_state.get("alt_m"))
+            lat = float(self._last_nav_state.get("lat", 0.0))
+            lon = float(self._last_nav_state.get("lon", 0.0))
+        except (TypeError, ValueError):
+            return
+
+        heading = self._last_nav_state.get("heading_deg", 0.0)
+        if alt <= 0.5:
+            self._send_motors_target(
+                vx=0.0, vy=0.0, vz=0.0,
+                alt_m=0.0, lat=lat, lon=lon,
+                heading_deg=heading,
+                drop=False,
+            )
+            self._self_diagnostics()
+            self._request_charging_droneport()
+
+            mid = self._mission.get("mission_id") if self._mission else None
+            self._notify_nus("mission_completed", {"mission_id": mid})
+            self._log_to_journal("AUTOPILOT_MISSION_COMPLETED", {"mission_id": mid})
+            self._log_to_journal("AUTOPILOT_READY_FOR_NEW_MISSION", {"mission_id": mid})
+
+            self._landing_active = False
+            self._mission = None
+            self._current_step_index = None
+            self._state = "IDLE"
+            return
 
         self._send_motors_target(
-            vx=0.0, vy=0.0, vz=-2.0,
+            vx=0.0, vy=0.0, vz=-1.0,
             alt_m=0.0, lat=lat, lon=lon,
-            heading_deg=self._last_nav_state.get("heading_deg", 0.0) if self._last_nav_state else 0.0,
+            heading_deg=heading,
             drop=False,
         )
-
-        self._self_diagnostics()
-        self._request_charging_droneport()
-
-        mid = self._mission.get("mission_id") if self._mission else None
-        self._notify_nus("mission_completed", {"mission_id": mid})
 
     def _self_diagnostics(self) -> bool:
         """Заглушка самодиагностики. TODO: реализовать реальные проверки."""

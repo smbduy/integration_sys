@@ -4,6 +4,7 @@ import time
 
 from sdk.base_component import BaseComponent
 from broker.system_bus import SystemBus
+from sdk.proxy_reply import extract_navigation_nav_state_from_target_response
 from sdk.proxy_reply import unwrap_proxy_target_response
 
 from components.limiter import config
@@ -149,11 +150,9 @@ class LimiterComponent(BaseComponent):
             timeout=self._request_timeout_s,
         )
         target_response = unwrap_proxy_target_response(response)
-        if not isinstance(target_response, dict):
-            return
-        nav_payload = target_response.get("payload")
-        if isinstance(nav_payload, dict):
-            self._last_nav = nav_payload
+        nav_state = extract_navigation_nav_state_from_target_response(target_response)
+        if isinstance(nav_state, dict):
+            self._last_nav = nav_state
 
     def _poll_telemetry_if_due(self) -> None:
         now = time.monotonic()
