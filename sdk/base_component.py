@@ -3,14 +3,14 @@
 
 Аналогичен BaseSystem, но без health check и run_forever.
 """
-import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Callable, Optional
 
 from broker.system_bus import SystemBus
-from sdk.messages import create_response
+from sdk.messages import create_response, create_dead_letter, DEAD_LETTER_TOPIC
 
-logger = logging.getLogger(__name__)
+_JOURNAL_TOPIC = os.environ.get("JOURNAL_TOPIC", "").strip()
 
 
 class BaseComponent(ABC):
@@ -22,6 +22,10 @@ class BaseComponent(ABC):
     - Подписывается на свой топик (components.{component_type})
     - Обрабатывает сообщения через маршрутизацию по action
     - Отвечает через reply_to (request/response) или publish
+
+    Auto-logging:
+    - Если задана переменная JOURNAL_TOPIC, после каждого обработанного action
+      компонент публикует log_event в журнальный топик.
     """
 
     def __init__(
@@ -38,6 +42,7 @@ class BaseComponent(ABC):
 
         self._handlers: Dict[str, Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
         self._running = False
+        self._journal_topic = _JOURNAL_TOPIC
 
         self._setup_handlers()
         self._register_handlers()
@@ -60,10 +65,30 @@ class BaseComponent(ABC):
         """Регистрирует обработчик для action."""
         self._handlers[action] = handler
 
+    def _emit_journal(self, action: str, sender: str, success: bool, error: str = ""):
+        """Publish a log_event to the journal topic (fire-and-forget)."""
+        if not self._journal_topic:
+            return
+        if action == "log_event":
+            return
+        try:
+            self.bus.publish(self._journal_topic, {
+                "action": "log_event",
+                "sender": self.topic,
+                "payload": {
+                    "event": action,
+                    "sender": sender,
+                    "success": success,
+                    "error": error,
+                    "component_id": self.component_id,
+                },
+            })
+        except Exception:
+            pass
+
     def _handle_message(self, message: Dict[str, Any]):
         """Маршрутизация входящего сообщения по action."""
         action = message.get("action")
-        reply_to = message.get("reply_to")
         if not action:
             print(f"[{self.component_id}] Message without action: {message}")
             return
@@ -71,38 +96,46 @@ class BaseComponent(ABC):
         handler = self._handlers.get(action)
         if not handler:
             print(f"[{self.component_id}] Unknown action: {action}")
-            if reply_to:
+            if message.get("reply_to"):
                 self.bus.respond(message, {"error": f"Unknown action: {action}"}, action="error")
+            else:
+                self.bus.publish(DEAD_LETTER_TOPIC, create_dead_letter(
+                    original_message=message,
+                    sender=self.component_id,
+                    error=f"Unknown action: {action}",
+                ))
             return
 
-        if reply_to:
-            logger.info(
-                "[%s] request action=%s reply_to=%s",
-                self.component_id, action, reply_to,
-            )
+        sender = message.get("sender", "")
         try:
             result = handler(message)
-            if reply_to and result is not None:
+            if message.get("reply_to") and result is not None:
                 response = create_response(
                     correlation_id=message.get("correlation_id"),
                     payload=result,
-                    sender=self.topic,
+                    sender=self.component_id,
                     success=True,
                 )
-                self.bus.publish(reply_to, response)
-                logger.info("[%s] response sent to %s", self.component_id, reply_to)
+                self.bus.publish(message["reply_to"], response)
+            self._emit_journal(action, sender, success=True)
         except Exception as e:
             print(f"[{self.component_id}] Error handling {action}: {e}")
-            if reply_to:
+            if message.get("reply_to"):
                 response = create_response(
                     correlation_id=message.get("correlation_id"),
                     payload={},
-                    sender=self.topic,
+                    sender=self.component_id,
                     success=False,
                     error=str(e),
                 )
-                self.bus.publish(reply_to, response)
-                logger.info("[%s] error response sent to %s", self.component_id, reply_to)
+                self.bus.publish(message["reply_to"], response)
+            else:
+                self.bus.publish(DEAD_LETTER_TOPIC, create_dead_letter(
+                    original_message=message,
+                    sender=self.component_id,
+                    error=str(e),
+                ))
+            self._emit_journal(action, sender, success=False, error=str(e))
 
     def _handle_ping(self, message: Dict[str, Any]) -> Dict[str, Any]:
         return {"pong": True, "component_id": self.component_id}
@@ -122,27 +155,6 @@ class BaseComponent(ABC):
         self.bus.subscribe(self.topic, self._handle_message)
         self._running = True
         print(f"[{self.component_id}] Started. Listening on topic: {self.topic}")
-        self._log_component_started()
-
-    def _log_component_started(self) -> None:
-        """Запись в журнал при старте (через МБ; у journal — локальная запись, см. JournalComponent)."""
-        if self.component_type == "journal":
-            return
-        try:
-            from sdk.journal_log import publish_journal_event
-
-            publish_journal_event(
-                self.bus,
-                self.topic,
-                "COMPONENT_STARTED",
-                source=self.component_type,
-                details={
-                    "component_id": self.component_id,
-                    "topic": self.topic,
-                },
-            )
-        except Exception as exc:
-            logger.debug("[%s] journal startup log skipped: %s", self.component_id, exc)
 
     def stop(self):
         """Отписывается и останавливает шину."""

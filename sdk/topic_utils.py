@@ -1,33 +1,46 @@
 """
-Утилиты формирования топиков.
+Утилиты для построения имён топиков компонентов.
 
-Формат: v1.{SystemName}.{InstanceID}.{component}
-Пример: v1.Agrodron.Agrodron001.autopilot
+Обёртка над topic_naming.build_component_topic с удобными shortcut-функциями,
+используемыми в agrodron и других системах.
 
-Параметры задаются через переменные окружения:
-  TOPIC_VERSION  — версия протокола (по умолчанию "v1")
-  SYSTEM_NAME    — имя системы (по умолчанию "Agrodron")
-  INSTANCE_ID    — идентификатор экземпляра (по умолчанию "Agrodron001")
+Итоговый формат:
+    {SYSTEM_NAMESPACE.}components.{SYSTEM_NAME}.{suffix}
+
+Примеры (SYSTEM_NAME=Agrodron):
+    components.Agrodron.navigation
+    components.Agrodron.autopilot
 """
 import os
 
-
-def topic_version() -> str:
-    return (os.environ.get("TOPIC_VERSION") or "v1").strip()
+from sdk.topic_naming import build_component_topic
 
 
 def system_name() -> str:
-    return (os.environ.get("SYSTEM_NAME") or "Agrodron").strip()
+    """Возвращает имя системы из SYSTEM_NAME (по умолчанию 'drone')."""
+    return os.environ.get("SYSTEM_NAME", "drone")
 
 
 def instance_id() -> str:
-    return (os.environ.get("INSTANCE_ID") or "Agrodron001").strip()
+    """Возвращает INSTANCE_ID системы (используется как drone_id для ORVD)."""
+    return os.environ.get("INSTANCE_ID", f"{system_name()}001")
 
 
 def topic_prefix() -> str:
-    return f"{topic_version()}.{system_name()}.{instance_id()}"
+    """Возвращает префикс системы: components.{SYSTEM_NAME}."""
+    ns = os.environ.get("SYSTEM_NAMESPACE", "")
+    prefix = f"{ns}." if ns else ""
+    return f"{prefix}components.{system_name()}"
 
 
-def topic_for(component: str) -> str:
-    """Топик внутреннего компонента: v1.Agrodron.Agrodron001.{component}"""
-    return f"{topic_prefix()}.{component}"
+def topic_for(component_suffix: str) -> str:
+    """
+    Возвращает полное имя топика для компонента.
+
+    topic_for("navigation") -> "components.Agrodron.navigation"
+    """
+    return build_component_topic(
+        component_suffix,
+        system_env_var="SYSTEM_NAME",
+        default_system_name=system_name(),
+    )

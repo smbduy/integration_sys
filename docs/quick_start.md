@@ -1,83 +1,121 @@
 # Quick Start
 
-Брокер (Kafka/MQTT), SDK и система **AgroDron** в каталоге `agrodron/`. Сборка Docker для системы выполняется через `scripts/prepare_system.py` (см. `make prepare` в `agrodron/`).
+Брокер (Kafka/MQTT) + SDK. Шаблоны: `components/dummy_component`, `systems/dummy_system`.
 
 ## Структура
 
 ```
-agrodron/            Система AgroDron: docker-compose компонентов, Makefile, tests/
-  components/        Компоненты (autopilot, mission_handler, security_monitor, …)
-  tests/integration/ Интеграционные тесты (in-process)
-broker/              SystemBus, MQTTSystemBus, KafkaSystemBus
-sdk/                 BaseComponent, topic_utils
-docker/              Инфраструктура брокера (Kafka, Mosquitto), example.env
-scripts/             prepare_system.py — слияние compose и .env
-config/              Pipfile, pyproject.toml (pytest)
-docs/                SYSTEM.md, EXTERNAL_API.md, quick_start.md
+broker/              Шина, create_system_bus
+sdk/                 BaseComponent, BaseSystem
+components/          Отдельные компоненты
+systems/             Системы (dummy_system)
+docker/              Брокер (kafka, mosquitto), Fabric proxy, Ledger gateway
+scripts/             prepare_system.py
+config/              Pipfile, pyproject.toml
+fabric-network/      Hyperledger Fabric сеть (submodule)
 ```
 
-## Окружение и тесты (из корня репозитория)
-
-Зависимости задаются в `config/Pipfile`:
+## Команды
 
 ```bash
-PIPENV_PIPFILE=config/Pipfile pipenv install
-cd agrodron && make unit-test          # только unit
-cd agrodron && make test               # unit + integration
-```
-
-Только брокер (без контейнеров AgroDron): скопируйте `docker/example.env` в `docker/.env`, затем поднимите compose из `docker/` (см. [docker/README.md](../docker/README.md)).
-
-## Команды Makefile
-
-Корневого `Makefile` нет: все цели `make` описаны в `agrodron/Makefile`.
-
-## AgroDron
-
-```bash
-cd agrodron
-make prepare       # Собрать .generated/
-make test          # Unit + integration тесты
-make docker-up     # Брокер + все компоненты
-make docker-ps     # Статус контейнеров
-make docker-logs   # Логи
-make docker-down   # Остановить
-```
-
-## Протокол сообщений
-
-Все сообщения — JSON с полями: `action`, `payload`, `sender`, `correlation_id`, `reply_to`.
-
-- **Топики**: `v1.{SystemName}.{InstanceID}.{component}` (например `v1.Agrodron.Agrodron001.autopilot`)
-- **sender**: полный топик отправителя (не короткое имя)
-- **action**: всегда lowercase (`get_state`, `set_target`, `log_event`)
-
-## Правило доступа компонентов
-
-Все компоненты (кроме МБ) принимают запросы **только от монитора безопасности**. Сообщения от любого другого sender игнорируются. МБ проксирует запросы от своего топика, поэтому целевой компонент видит `sender = v1.Agrodron.Agrodron001.security_monitor`.
-
-Поток:
-
-1. Клиент отправляет `proxy_request` / `proxy_publish` на топик security_monitor
-2. МБ проверяет политику `(sender, topic, action)`
-3. МБ проксирует сообщение к целевому компоненту от своего sender
-4. Целевой компонент проверяет sender и обрабатывает запрос
-
-## Docker (полная система AgroDron)
-
-```bash
-cp docker/example.env docker/.env   # при необходимости скорректируйте BROKER_TYPE и пароли
-cd agrodron
-make prepare          # agrodron/.generated/docker-compose.yml и .env
-make docker-up        # брокер + все компоненты (профиль из BROKER_TYPE в смерженном .env)
+make init          # pipenv + зависимости
+make unit-test     # Unit тесты
+make docker-up     # Брокер (kafka/mqtt)
 make docker-down
 ```
 
-Переменные `BROKER_TYPE`, `ADMIN_USER`, `ADMIN_PASSWORD` задаются в `docker/.env` и `agrodron/.env` (итог — в `agrodron/.generated/.env`). Топики: `TOPIC_VERSION`, `SYSTEM_NAME`, `INSTANCE_ID`.
+**Система:**
+```bash
+cd systems/dummy_system
+make prepare       # Собрать .generated/
+make docker-up    # Брокер + компоненты
+make unit-test
+make test-all-docker
+```
 
-При **MQTT** при нагрузке на монитор безопасности имеет значение размер пула обработки входящих сообщений — **`MQTT_BUS_CALLBACK_WORKERS`** (по умолчанию 32, см. [SYSTEM.md](SYSTEM.md) → раздел про MQTT и этот параметр).
+**Несколько систем (одна Kafka):**
+```bash
+make prepare-multi SYSTEMS="drone_port gcs"
+docker compose -f .generated/multi/docker-compose.yml --env-file .generated/multi/.env --profile kafka up -d --build
+```
+Скрипт `prepare-multi` собирает единый compose для выбранных систем, включает брокер один раз и падает при конфликте host-портов.
 
-## Документация
+## Протокол
 
-- [docs/SYSTEM.md](SYSTEM.md) — полная документация системы AgroDron
-- [docs/EXTERNAL_API.md](EXTERNAL_API.md) — API для внешних систем (НУС, ОРВД, Дронопорт, SITL)
+Сообщения — dict: `action`, `payload`, `sender`, `correlation_id`, `reply_to`.
+
+## Топики
+
+| Шаблон | Назначение | Пример |
+|--------|------------|--------|
+| `systems.<имя_системы>` | Входной топик системы (Gateway) | `systems.flight_system` |
+| `components.<имя_компонента>` | Топик компонента | `components.gps_sensor` |
+| `errors.dead_letters` | Ошибки fire-and-forget | — |
+
+### SYSTEM_NAMESPACE — изоляция экземпляров
+
+Если на одном брокере работают несколько экземпляров одной системы
+(например, два `flight_system` с одинаковыми компонентами), топики совпадут.
+
+Чтобы этого избежать, задайте переменную окружения `SYSTEM_NAMESPACE`.
+Она автоматически добавляет префикс ко всем топикам:
+
+| `SYSTEM_NAMESPACE` | Итоговый топик системы | Итоговый топик компонента |
+|--------------------|------------------------|---------------------------|
+| *(не задан)* | `systems.flight_system` | `components.gps_sensor` |
+| `fleet_1` | `fleet_1.systems.flight_system` | `fleet_1.components.gps_sensor` |
+| `fleet_2` | `fleet_2.systems.flight_system` | `fleet_2.components.gps_sensor` |
+
+В `docker-compose.yml` или `.env` системы:
+
+```yaml
+environment:
+  - SYSTEM_NAMESPACE=fleet_1
+```
+
+Если `SYSTEM_NAMESPACE` не задан — топики без префикса, всё работает как раньше.
+
+### Межсистемное взаимодействие
+
+Внешняя система отправляет запрос на топик `systems.<имя_системы>`,
+не зная внутренних компонентов. Gateway (`BaseGateway`) по таблице
+`ACTION_ROUTING` маршрутизирует запрос к нужному компоненту
+и возвращает ответ отправителю.
+
+> **Dead Letter Topic.**
+> Если сообщение пришло без `reply_to` (fire-and-forget) и обработка
+> завершилась ошибкой или action не найден, оно отправляется
+> в `errors.dead_letters`. При наличии `reply_to` ошибка возвращается
+> отправителю как обычный ответ.
+
+## Свой компонент/система
+
+- **Компонент:** `components/README.MD`
+- **Система:** `systems/README.md`
+
+## Docker
+
+```bash
+cp docker/example.env docker/.env
+# BROKER_TYPE=kafka или mqtt
+make docker-up
+```
+
+| Переменная | Описание |
+|------------|----------|
+| BROKER_TYPE | kafka / mqtt |
+| ADMIN_USER, ADMIN_PASSWORD | Админ брокера |
+| COMPONENT_USER_A/B | Опционально, для компонентов |
+
+## Fabric Ledger (смарт-контракты)
+
+При `ENABLE_FABRIC=true` поднимаются `fabric-proxy` и `ledger-gateway`.
+Компоненты вызывают контракты через `bus.request("components.ledger", ...)`.
+
+Подробнее: [docs/fabric_integration.md](fabric_integration.md)
+
+## Troubleshooting
+
+- Брокер недоступен: проверьте profile (kafka/mqtt) в docker-up
+- Внутри Docker: имена контейнеров (kafka, mosquitto), не localhost
+- Fabric: сеть должна быть запущена до `make docker-up`

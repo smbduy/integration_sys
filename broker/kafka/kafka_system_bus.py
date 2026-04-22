@@ -7,7 +7,6 @@ import os
 from typing import Callable, Dict, Any, Optional
 from uuid import uuid4
 from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 try:
     from kafka import KafkaProducer, KafkaConsumer
@@ -78,10 +77,13 @@ class KafkaSystemBus(SystemBus):
         if self._started:
             return
         self._init_producer()
-        try:
-            self._producer.send(self._reply_topic, {"_init": True}).get(timeout=10)
-        except Exception:
-            pass
+        for attempt in range(3):
+            try:
+                self._producer.send(self._reply_topic, {"_init": True}).get(timeout=10)
+                break
+            except Exception as e:
+                print(f"Reply topic init attempt {attempt+1}/3 failed: {e}")
+                time.sleep(2.0)
         self._producer.flush()
         time.sleep(1.0)
         self.subscribe(self._reply_topic, self._handle_reply)
@@ -247,7 +249,7 @@ class KafkaSystemBus(SystemBus):
         try:
             result = future.result(timeout=timeout)
             return result
-        except (TimeoutError, FuturesTimeoutError):
+        except TimeoutError:
             with self._pending_lock:
                 self._pending_requests.pop(correlation_id, None)
             print(f"Request to {topic} timed out after {timeout}s")

@@ -7,7 +7,6 @@ import os
 from typing import Callable, Dict, Any, Optional
 from uuid import uuid4
 from concurrent.futures import Future, ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 try:
     import paho.mqtt.client as mqtt
@@ -48,14 +47,7 @@ class MQTTSystemBus(SystemBus):
         self._reply_topic = f"replies/{self.client_id}"
         self._connected = False
         self._started = False
-        # Обработчики подписок (в т.ч. security_monitor с блокирующим proxy_request) идут через пул.
-        # При max_workers=4 несколько долгих proxy к МБ могли откладывать обработку новых запросов
-        # дольше внешнего таймаута (симптом: первый снимок ok, дальше таймауты).
-        _pool = int(os.environ.get("MQTT_BUS_CALLBACK_WORKERS", "32"))
-        self._executor = ThreadPoolExecutor(
-            max_workers=max(4, _pool),
-            thread_name_prefix="mqtt_cb",
-        )
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mqtt_cb")
 
     def _topic_to_mqtt(self, topic: str) -> str:
         """Топик systems.xxx -> systems/xxx для MQTT."""
@@ -234,7 +226,7 @@ class MQTTSystemBus(SystemBus):
         try:
             result = future.result(timeout=timeout)
             return result
-        except (TimeoutError, FuturesTimeoutError):
+        except TimeoutError:
             with self._pending_lock:
                 self._pending_requests.pop(correlation_id, None)
             print(f"Request to {topic} timed out after {timeout}s")
