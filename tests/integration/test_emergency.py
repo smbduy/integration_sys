@@ -1,11 +1,11 @@
 """Integration tests: emergency flow (limiter -> emergensy -> isolation)."""
 import json
 
-from tests.integration.integration_bus import IntegrationBus
-from sdk.topic_utils import topic_for
+from agrodron.tests.integration.integration_bus import IntegrationBus
+from systems.agrodron.src.topic_utils import topic_for
 
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
-from components.emergensy.src.emergensy import EmergenseyComponent
+from systems.agrodron.src.security_monitor.src.security_monitor import SecurityMonitorComponent
+from systems.agrodron.src.emergensy.src.emergensy import EmergenseyComponent
 
 
 def _build_policies():

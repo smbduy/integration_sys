@@ -2,11 +2,11 @@
 import json
 import os
 
-from tests.integration.integration_bus import IntegrationBus
-from sdk.topic_utils import topic_for
+from agrodron.tests.integration.integration_bus import IntegrationBus
+from systems.agrodron.src.topic_utils import topic_for
 
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
-from components.journal.src.journal import JournalComponent
+from systems.agrodron.src.security_monitor.src.security_monitor import SecurityMonitorComponent
+from systems.agrodron.src.journal.src.journal import JournalComponent
 
 
 def _policies_json(policies):

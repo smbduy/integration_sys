@@ -1,11 +1,11 @@
 """Integration tests: proxy_request through security_monitor."""
 import json
 
-from tests.integration.integration_bus import IntegrationBus
-from sdk.topic_utils import topic_for
+from agrodron.tests.integration.integration_bus import IntegrationBus
+from systems.agrodron.src.topic_utils import topic_for
 
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
-from components.motors.src.motors import MotorsComponent
+from systems.agrodron.src.security_monitor.src.security_monitor import SecurityMonitorComponent
+from systems.agrodron.src.motors.src.motors import MotorsComponent
 
 
 def _policies_json(policies):
@@ -70,4 +70,6 @@ def test_proxy_request_denied_by_policy():
     }
 
     result = sm._handle_proxy_request(msg)
-    assert result is None
+    assert isinstance(result, dict)
+    assert result.get("ok") is False
+    assert result.get("error") == "policy_denied"

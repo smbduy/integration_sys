@@ -2,13 +2,13 @@
 import json
 import os
 
-from tests.integration.integration_bus import IntegrationBus
-from sdk.topic_utils import topic_for
+from agrodron.tests.integration.integration_bus import IntegrationBus
+from systems.agrodron.src.topic_utils import topic_for
 
-from components.security_monitor.src.security_monitor import SecurityMonitorComponent
-from components.autopilot.src.autopilot import AutopilotComponent
-from components.mission_handler.src.mission_handler import MissionHandlerComponent
-from components.journal.src.journal import JournalComponent
+from systems.agrodron.src.security_monitor.src.security_monitor import SecurityMonitorComponent
+from systems.agrodron.src.autopilot.src.autopilot import AutopilotComponent
+from systems.agrodron.src.mission_handler.src.mission_handler import MissionHandlerComponent
+from systems.agrodron.src.journal.src.journal import JournalComponent
 
 
 WPL_SAMPLE = "QGC WPL 110\n0\t1\t0\t16\t0\t0\t0\t0\t60.0\t30.0\t5.0\t1"
@@ -110,7 +110,7 @@ def test_start_mission_orvd_denied(tmp_path):
 
     bus, sm, autopilot, mission_handler, journal = _setup(tmp_path)
 
-    sm._policies.add((topic_for("autopilot"), os.environ["ORVD_TOPIC"], "request_departure"))
+    sm._policies.add((topic_for("autopilot"), os.environ["ORVD_TOPIC"], "request_takeoff"))
 
     bus.register_topic_handler(os.environ["ORVD_TOPIC"], lambda msg: {"approved": False, "reason": "restricted"})
     bus.register_topic_handler(os.environ.get("NUS_TOPIC", ""), lambda msg: {"ok": True})
